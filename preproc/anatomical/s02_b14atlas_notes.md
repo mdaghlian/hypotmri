@@ -1,0 +1,14 @@
+# s03 generate b14 atlas for the freesurfer output
+
+[1] Create conda env with neuropythy installed
+```bash
+mamba create -n npythflat001 python
+conda activate npythflat001
+pip install neuropythy
+```
+
+[2] activate & run 
+```bash
+conda activate npythflat001
+python s03_b14atlas.py sub-hp01_ses-01 --fsdir "/Users/marcusdaghlian/CVL Dropbox/Marcus  Daghlian/240522NG/hypot/derivatives/freesurfer" 
+```
