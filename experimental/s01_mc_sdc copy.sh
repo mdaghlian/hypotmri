@@ -1,28 +1,56 @@
 #!/bin/bash
-#
-# FSL Comprehensive Preprocessing Script with Proper Ordering
-# Order: Motion Correction (mcflirt) → Topup (SDC) → Combined Application
-# This follows fMRIPrep and other best-practice pipelines
-#
-# Usage: ./fmri_preproc_full.sh <bids_dir> <output_dir> <subject> <session> <task> [run1,run2,... or 'all']
-#
-# Example: ./fmri_preproc_full.sh /data/bids /data/bids/derivatives/preproc sub-01 ses-01 rest all
+set -e
 
-set -e  # Exit on error
+# --- Default Values ---
+SESSION="ses-01"
+TASK=""
 
-# Check for required arguments
-if [ $# -lt 5 ]; then
-    echo "Usage: $0 <bids_dir> <output_dir> <subject> <session> <task> [run1,run2,... or 'all']"
-    echo "Example: $0 /data/bids /data/derivatives/preproc sub-01 ses-01 rest all"
+# --- Usage Function ---
+usage() {
+    echo "Usage: $0 --bids_dir <path> --output_dir <path> --subject <ID> [options]"
+    echo ""
+    echo "Required Arguments:"
+    echo "  --bids_dir      Path to the BIDS root directory"
+    echo "  --output_dir    Path to the output derivatives directory"
+    echo "  --sub           Subject label (e.g., sub-01)"
+    echo ""
+    echo "Optional Arguments:"
+    echo "  --ses           Session label (default: $SESSION)"
+    echo "  --task          Task label (default: $TASK)"
+    echo "  --help          Display this help message"
+    exit 1
+}
+
+# --- Parse Arguments ---
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bids_dir)     BIDS_DIR="$2"; shift 2 ;;
+        --output_dir)   OUTPUT_DIR="$2"; shift 2 ;;
+        --sub)          SUBJECT="$2"; shift 2 ;;
+        --ses)          SESSION="$2"; shift 2 ;;
+        --task)         TASK="$2"; shift 2 ;;
+        --help)         usage ;;
+        *)              echo "Unknown argument: $1"; usage ;;
+    esac
+done
+
+# --- Validation ---
+if [[ -z "$BIDS_DIR" || -z "$OUTPUT_DIR" || -z "$SUBJECT" ]]; then
+    echo "Error: --bids_dir, --output_dir, and --subject are required."
+    echo "Run with --help for details."
     exit 1
 fi
 
-BIDS_DIR=$1
-OUTPUT_DIR=$2
-SUBJECT=$3
-SESSION=$4
-TASK=$5
-RUN_SPEC=${6:-"all"}
+# --- Status Summary ---
+echo "-------------------------------------------------------"
+echo "Processing: Motion Correction & SDC"
+echo "-------------------------------------------------------"
+echo " BIDS Root: $BIDS_DIR"
+echo " Output:    $OUTPUT_DIR"
+echo " Subject:   $SUBJECT"
+echo " Session:   $SESSION"
+echo " Task:      $TASK"
+echo "-------------------------------------------------------"
 
 # Construct paths
 FUNC_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/func"
@@ -33,47 +61,21 @@ SUBJECT_OUTPUT_DIR="${OUTPUT_DIR}/${SUBJECT}/${SESSION}"
 mkdir -p "${SUBJECT_OUTPUT_DIR}"
 
 echo "=========================================="
-echo "FSL Comprehensive Preprocessing Pipeline"
-echo "Order: Motion Correction → Topup → Application"
+echo "Running mcflirt + fsl_topup"
 echo "Subject: ${SUBJECT}"
 echo "Session: ${SESSION}"
 echo "Task: ${TASK}"
 echo "=========================================="
 
 # Determine which runs to process
-if [ "$RUN_SPEC" = "all" ]; then
-    BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_run-*_bold.nii*" | sort))
-    
-    if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-        BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*bold.nii*" | grep -v "run-" | head -n 1))
-    fi
-    
-    if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-        echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}_task-${TASK}"
-        exit 1
-    fi
-    
-    echo "Found ${#BOLD_FILES[@]} run(s) to process"
-else
-    IFS=',' read -ra RUNS <<< "$RUN_SPEC"
-    BOLD_FILES=()
-    for run in "${RUNS[@]}"; do
-        run=$(echo "$run" | xargs)
-        bold_file=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${run}_bold.nii*" | head -n 1)
-        if [ -z "$bold_file" ]; then
-            echo "Warning: BOLD file not found for ${run}, skipping..."
-        else
-            BOLD_FILES+=("$bold_file")
-        fi
-    done
-    
-    if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-        echo "Error: No valid BOLD files found for specified runs"
-        exit 1
-    fi
-    
-    echo "Processing ${#BOLD_FILES[@]} specified run(s)"
+
+BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}*_bold.nii*" | sort))    
+if [ ${#BOLD_FILES[@]} -eq 0 ]; then
+    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}_task-${TASK}"
+    exit 1
 fi
+
+echo "Found ${#BOLD_FILES[@]} run(s) to process"
 
 # Convert PE direction to FSL format
 convert_pe_to_vector() {
@@ -180,23 +182,23 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     MCFLIRT_OUTPUT="${WORK_DIR}/bold_mcf.nii.gz"
     MCFLIRT_PARAMS="${WORK_DIR}/bold_mcf.par"
     
-    # Determine reference volume for motion correction
-    if [ -n "$SBREF_FILE" ]; then
-        echo "Using SBREF as motion correction reference"
-        mcflirt -in "${BOLD_FILE}" \
-                -reffile "${SBREF_FILE}" \
-                -out "${MCFLIRT_OUTPUT_name}" \
-                -mats \
-                -plots \
-                -report
-    else
-        echo "Using median volume as motion correction reference"
-        mcflirt -in "${BOLD_FILE}" \
-                -out "${MCFLIRT_OUTPUT_name}" \
-                -mats \
-                -plots \
-                -report
-    fi
+    # # Determine reference volume for motion correction
+    # if [ -n "$SBREF_FILE" ]; then
+    #     echo "Using SBREF as motion correction reference"
+    #     mcflirt -in "${BOLD_FILE}" \
+    #             -reffile "${SBREF_FILE}" \
+    #             -out "${MCFLIRT_OUTPUT_name}" \
+    #             -mats \
+    #             -plots \
+    #             -report
+    # else
+    #     echo "Using median volume as motion correction reference"
+    #     mcflirt -in "${BOLD_FILE}" \
+    #             -out "${MCFLIRT_OUTPUT_name}" \
+    #             -mats \
+    #             -plots \
+    #             -report
+    # fi
     
     echo "Motion correction completed"
     echo "  Output: ${MCFLIRT_OUTPUT}"
@@ -223,14 +225,14 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     echo "STEP 2: Preparing Reference Images for Topup"
     echo "=========================================="
     
-    # Extract mean or first volume from motion-corrected BOLD
+    # Either use SBREF or mean 
     if [ -n "$SBREF_FILE" ]; then
         echo "  Using SBREF as BOLD reference"
         BOLD_REF="${WORK_DIR}/bold_ref.nii.gz"
         cp "${SBREF_FILE}" "${BOLD_REF}"
     else
-        echo "  Computing temporal mean of motion-corrected BOLD"
         BOLD_REF="${WORK_DIR}/bold_ref.nii.gz"
+        echo "  Computing temporal mean of motion-corrected BOLD"
         fslmaths "${MCFLIRT_OUTPUT}" -Tmean "${BOLD_REF}"
     fi
     
@@ -246,7 +248,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     echo "=========================================="
     echo "STEP 3: Running Topup (SDC)"
     echo "=========================================="
-    
+    # https://fsl.fmrib.ox.ac.uk/fsl/docs/diffusion/topup/users_guide/index.html
     # Merge reference images for topup
     MERGED="${WORK_DIR}/merged_b0.nii.gz"
     fslmerge -t "${MERGED}" "${BOLD_REF}" "${EPI_REF}"
@@ -263,29 +265,32 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     echo ""
     echo "Running topup (this may take several minutes)..."
     TOPUP_BASENAME="${WORK_DIR}/topup_results"
+    fslhd "${BOLD_REF}" | egrep 'dim[123]|pixdim[123]|qform|sform'
+    fslhd "${EPI_REF}"  | egrep 'dim[123]|pixdim[123]|qform|sform'
+
+    # topup \
+    #     --imain="${MERGED}" \
+    #     --datain="${ACQPARAMS}" \
+    #     --config=b02b0.cnf \
+    #     --out="${TOPUP_BASENAME}" \
+    #     --fout="${TOPUP_BASENAME}_field" \
+    #     --iout="${TOPUP_BASENAME}_unwarped" \
+    #     --dfout=${WORK_DIR}/topup_warp   \
+    #     -v
     
-    topup \
-        --imain="${MERGED}" \
-        --datain="${ACQPARAMS}" \
-        --config=b02b0.cnf \
-        --out="${TOPUP_BASENAME}" \
-        --fout="${TOPUP_BASENAME}_field" \
-        --iout="${TOPUP_BASENAME}_unwarped" \
-        -v
-    
-    SHIFT_MAP="${WORK_DIR}/topup_shiftmap.nii.gz"
-    # Make these extra versions - can be used later 
-    # when concatenating all the transforms (fmriprep style)
-    fugue \
-        --loadfmap="${TOPUP_BASENAME}_field.nii.gz" \
-        --dwell="${BOLD_TRT}" \
-        --saveshift="${SHIFT_MAP}"
-    TOPUP_WARP_3D="${WORK_DIR}/topup_warp_3vol.nii.gz"
-    convertwarp \
-        --ref="${BOLD_REF}" \
-        --shiftmap="${SHIFT_MAP}" \
-        --shiftdir="${BOLD_PE}" \
-        --out="${TOPUP_WARP_3D}"
+    # SHIFT_MAP="${WORK_DIR}/topup_shiftmap.nii.gz"
+    # # Make these extra versions - can be used later 
+    # # when concatenating all the transforms (fmriprep style)
+    # fugue \
+    #     --loadfmap="${TOPUP_BASENAME}_field.nii.gz" \
+    #     --dwell="${BOLD_TRT}" \
+    #     --saveshift="${SHIFT_MAP}"
+    # TOPUP_WARP_3D="${WORK_DIR}/topup_warp_3vol.nii.gz"
+    # convertwarp \
+    #     --ref="${BOLD_REF}" \
+    #     --shiftmap="${SHIFT_MAP}" \
+    #     --shiftdir="${BOLD_PE}" \
+    #     --out="${TOPUP_WARP_3D}"
     echo "Topup completed successfully"
     
     # ============================================================
@@ -301,14 +306,14 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     CORRECTED_BOLD="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_desc-preproc_bold.nii.gz"
     
     echo "Applying topup to motion-corrected BOLD..."
-    applytopup \
-        --imain="${MCFLIRT_OUTPUT}" \
-        --inindex=1 \
-        --datain="${ACQPARAMS}" \
-        --topup="${TOPUP_BASENAME}" \
-        --out="${CORRECTED_BOLD}" \
-        --method=jac \
-        -v
+    # applytopup \
+    #     --imain="${MCFLIRT_OUTPUT}" \
+    #     --inindex=1 \
+    #     --datain="${ACQPARAMS}" \
+    #     --topup="${TOPUP_BASENAME}" \
+    #     --out="${CORRECTED_BOLD}" \
+    #     --method=jac \
+    #     -v
     
     echo "  Preprocessing complete: ${CORRECTED_BOLD}"
     
@@ -327,8 +332,8 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     fslroi "${TOPUP_BASENAME}_unwarped.nii.gz" "${UNWARP_OUTPUT}" 0 1 
 
     # [2] warp field    
-    TOPUP_WARP_3D_OUTPUT="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_desc-topup_warp.nii.gz"
-    cp "${TOPUP_WARP_3D}" "${TOPUP_WARP_3D_OUTPUT}"
+    TOP_FILE="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_desc-topup_warp.nii.gz"
+    cp "${WORK_DIR}/topup_warp_01.nii.gz" "${TOP_FILE}"
 
     # Save movement parameters if available
     MOVPAR_OUTPUT="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_desc-topup_movpar.txt"

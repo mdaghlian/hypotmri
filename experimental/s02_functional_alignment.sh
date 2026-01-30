@@ -103,3 +103,28 @@ bbregister \
 
 echo "Registration matrix saved to: $REG_DAT"
 echo "All steps complete for $SUBJ_ID."
+
+
+# 5. Convert bbregister transform to an FSL-style FLIRT matrix
+echo "------------------------------------------------"
+echo "Converting bbregister transform to FSL matrix"
+echo "------------------------------------------------"
+
+# Define FreeSurfer target volume (structural)
+FS_TARG="$SUBJECTS_DIR/$SUBJ_ID/mri/brain.mgz"   # or orig.mgz / T1.mgz depending on your preference
+
+# Make a NIfTI version of the target for FSL bookkeeping (optional but nice to have)
+STRUCT_NII="$OUT_DIR/struct_brain.nii.gz"
+mri_convert "$FS_TARG" "$STRUCT_NII"
+
+# Output FSL matrix (maps MOV -> TARG in FSL voxel coordinates)
+FSL_MAT_OUT="$OUT_DIR/func_to_struct_fsl.mat"
+
+tkregister2 \
+  --mov "$GRAND_MEAN_OUT" \
+  --targ "$FS_TARG" \
+  --reg "$REG_DAT" \
+  --fslregout "$FSL_MAT_OUT" \
+  --noedit
+
+echo "FSL-style matrix saved to: $FSL_MAT_OUT"

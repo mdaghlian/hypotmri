@@ -1,0 +1,8 @@
+{
+  "bold": {
+    "datatype": "func",
+    "suffix": "bold",
+    "session": "fprep",
+    "task": ["pRFLE", "pRFRE"]
+  }
+}

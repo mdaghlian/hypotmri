@@ -1,10 +1,32 @@
 # Fmriprep
-
+```bash
 mamba create -n fmriprep001 python
 conda activate fmriprep001 
-
 python -m pip install fmriprep-docker
+```
 
+ARGHHH need to fix this ...
+
+# Run fmriprep anat only
+```bash
+
+rm -rf /Users/marcusdaghlian/projects/dp-clean-link/240522NG/BIDSWF/*
+rm -rf /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/fmriprep/sub-hp01
+rm -rf /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/freesurfer/sub-hp01_ses-01
+fmriprep-docker \
+  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/ \
+  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/fmriprep \
+  participant \
+  --participant-label sub-hp01 \
+  --fs-subjects-dir  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/freesurfer \
+  --fs-license-file /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/code/license.txt \
+  --skip-bids-validation \
+  --omp-nthreads 8 \
+  -w /Users/marcusdaghlian/projects/dp-clean-link/240522NG/BIDSWF \
+  --anat-only --longitudinal --subject-anatomical-reference unbiased 
+  
+  --longitudinal --ses 01
+```
 
 cd /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/BIDS
 
@@ -16,18 +38,7 @@ for bold in sub-*/func/*_bold.nii*; do
   fi
 done
 
-# Run fmriprep anat only
-fmriprep-docker \
-  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/ \
-  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/fmriprep \
-  participant \
-  --participant-label sub-hp01 \
-  --fs-subjects-dir  /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/derivatives/freesurfer \
-  --fs-license-file /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/code/license.txt \
-  --skip-bids-validation \
-  --omp-nthreads 8 \
-  -w /Users/marcusdaghlian/projects/dp-clean-link/240522NG/BIDSWF \
-  --anat-only
+
 
 
 

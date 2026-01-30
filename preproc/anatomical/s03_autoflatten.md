@@ -9,5 +9,5 @@ mamba create -n autoflat002 python
 conda activate autoflat002
 pip install autoflatten
 # run on a freesurfer subjects
-autoflatten /Users/marcusdaghlian/pilot-clean-link/derivatives/freesurfer/sub-01
+autoflatten $SUBJECTS_DIR/sub-hp01
 ```

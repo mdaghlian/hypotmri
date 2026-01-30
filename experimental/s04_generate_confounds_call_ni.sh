@@ -3,7 +3,7 @@
 sub="sub-hp01"
 ses="ses-01"
 task="task-pRFRE"
-run="run-01"
+run="run-02"
 tr=1.0
 
 export SUBJECTS_DIR=~/projects/dp-clean-link/240522NG/hypot/derivatives/freesurfer
@@ -22,8 +22,9 @@ echo "Motion parameters file: ${tMC_FILE}"
 tBOLD=$(find ${MC_DIR} -name "${sub}_${ses}_${task}_${run}_bold_desc-preproc_bold.nii.gz" | head -n 1)
 echo "Motion corrected BOLD file: ${tBOLD}"
 
-OUT_DIR=${DERIV_DIR}/sf4_confounds/${sub}/${ses}
+CONFOUND_DIR=${DERIV_DIR}/sf4_confounds
 rm -rf $OUT_DIR
+OUT_DIR=${CONFOUND_DIR}/${sub}/${ses}
 if [ ! -d ${OUT_DIR} ]; then
     mkdir -p ${OUT_DIR}
 fi
@@ -33,4 +34,5 @@ python ./s04_generate_confounds_nipy.py \
     --mcpar "${tMC_FILE}" \
     --aseg "${aseg_file}" \
     --tr ${tr} \
-    --outdir "${OUT_DIR}" 
+    --outdir "${OUT_DIR}" \
+    --outfile "${sub}_${ses}_${task}_${run}_desc-confounds_timeseries"
