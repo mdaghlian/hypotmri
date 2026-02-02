@@ -1,6 +1,6 @@
 # s03 generate b14 atlas for the freesurfer output
 
-[1] Create conda env with neuropythy installed
+[1] Create conda env with neuropythy installed (if not already created)
 ```bash
 mamba create -n npythflat001 python
 conda activate npythflat001

@@ -1,22 +1,11 @@
 #!/bin/bash
 set -e
 
-# --- COREGISTRATION STRATEGY ---
-# - input dir, contains sdc correcte sbrefs + bold 
-# assumes 1 sbref per bold, taken at the same time, so they are 
-# good references for motion correction
-# (1) Select first sbref as "master" - coregister to anatomy with bbregister
-# (2) MCFLIRT per run, using the corresponding sbref_i
-# (3) Coregister each sbref_i to sbref_master
-# (4) Concatenate transforms
-# TODO: 
-# option for missing sbrefs
-# projfrac different 
-# - Vol -> sbref_i -> sbref_master -> anatomy 
-
 # --- Default Values ---
 SESSION="ses-01"
+TASK=""
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" &> /dev/null && pwd)
+REF_METHOD="mean"
 
 # --- Usage Function ---
 usage() {
@@ -28,6 +17,9 @@ usage() {
     echo "  --sub           Subject label (e.g., sub-01)"
     echo ""
     echo "Optional Arguments:"
+    echo "  --ses           Session label (default: $SESSION)"
+    echo "  --ref           Which reference method, mean of sbref"
+    echo "  --task          Task label (default: $TASK)"
     echo "  --help          Display this help message"
     exit 1
 }
@@ -39,30 +31,12 @@ while [[ $# -gt 0 ]]; do
         --output_dir)   OUTPUT_DIR="$2"; shift 2 ;;
         --sub)          SUBJECT="$2"; shift 2 ;;
         --ses)          SESSION="$2"; shift 2 ;;
+        --task)         TASK="$2"; shift 2 ;;
+        --ref)          REF="$2"; shift 2 ;;
         --help)         usage ;;
         *)              echo "Unknown argument: $1"; usage ;;
     esac
 done
-
-# help function
-get_labels() {
-    local infile="$1"
-    local run_label=""
-    local TASK="task-unknown"
-
-    # Extract run label
-    if [[ "$infile" =~ run-([0-9]+) ]]; then
-        run_label="run-${BASH_REMATCH[1]}"
-    fi
-
-    # Extract task label
-    if [[ "$infile" =~ task-([a-zA-Z0-9]+) ]]; then
-        TASK="task-${BASH_REMATCH[1]}"
-    fi
-
-    # Return values (space-separated)
-    echo "$run_label $TASK"
-}
 
 # --- Validation ---
 if [[ -z "$INPUT_DIR" || -z "$OUTPUT_DIR" || -z "$SUBJECT" ]]; then
@@ -73,56 +47,102 @@ fi
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
-echo "Processing: Motion Correction + regisration "
+echo "Processing: Motion Correction "
 echo "-------------------------------------------------------"
 echo " Input:     $INPUT_DIR"
 echo " Output:    $OUTPUT_DIR"
 echo " Subject:   $SUBJECT"
 echo " Session:   $SESSION"
+echo " Task:      $TASK"
+echo " Ref method:$REF_METHOD"
 echo "-------------------------------------------------------"
-
 
 # Construct paths
 SUBJECT_OUTPUT_DIR="${OUTPUT_DIR}/${SUBJECT}/${SESSION}"
+
+# Create output directories
 mkdir -p "${SUBJECT_OUTPUT_DIR}"
 
-# ************************************************
-# ************************************************
-# (1) CREATE BREF_MASTER & register to anatomy
+echo "=========================================="
+echo "Running mcflirt"
+echo "Subject: ${SUBJECT}"
+echo "Session: ${SESSION}"
+echo "Task: ${TASK}"
+echo "=========================================="
+
+
+# ****** ****** CREATE BREF_MASTER ***** ***** ***** 
 echo "Creating master reference"
 BREF_MASTER=$SUBJECT_OUTPUT_DIR/${SUBJECT}_${SESSION}_BREF_MASTER.nii.gz
 if [[ ! -f "$BREF_MASTER" ]]; then
-    # ************************************************
-    # COPY SBREF AS MASTER BREF
-    # ************************************************
-    echo "COPYING FIRST SBREF FILE IN THIS SESSION"
-    echo "THIS WILL BE THE BREF_MASTER" 
-    
-    # Select the first SBREF, we will use this as the target for all runs
-    SBREFs=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}_*sbref*.nii*"))
-    # Select the first element (index 0)
-    SBREF_m="${SBREFs[0]}"
-    if [[ -z "$SBREF_m" ]]; then
-        echo "No SBREF files found."
-        exit 1
-    else
-        echo "Using SBREF: $SBREF_m"
+    if [ "$REF_METHOD" = "mean" ]; then
+        # ************************************************
+        # ************************************************
+        # ************************************************
+        echo "Using mean of run for session "
+        echo "Find all runs for this session " 
+        ALL_BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_bold*.nii*" | sort))    
+        BOLD_m="${ALL_BOLD_FILES[0]}"
+        TMP_DIR=${SUBJECT_OUTPUT_DIR}/tmp_moco
+        mkdir -p $TMP_DIR
+        MCFLIRT_OUTPUT_name="${TMP_DIR}/bold_mcf"
+        # Make a note of what was run
+        mc_note=$SUBJECT_OUTPUT_DIR/reference_method_notes.txt
+        echo "Mean of ${BOLD_m} was used as BREF_MASTER" >> $mc_note
+        mcflirt -in "${BOLD_m}" \
+                -out "${MCFLIRT_OUTPUT_name}" \
+                -mats \
+                -plots \
+                -report    
+        fslmaths "${MCFLIRT_OUTPUT_name}.nii.gz" -Tmean "${BREF_MASTER}"
+        rm -rf ${TMP_DIR}
+
+    elif [ "$REF_METHOD" = "sbref" ]; then
+        # ************************************************
+        # COPY SBREF AS MASTER BREF
+        # ************************************************
+        echo "COPYING FIRST SBREF FILE IN THIS SESSION"
+        echo "THIS WILL BE THE BREF_MASTER" 
+        
+        # Select the first SBREF, we will use this as the target for all runs
+        SBREFs=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}_*sbref*.nii*"))
+        # Select the first element (index 0)
+        SBREF_m="${SBREFs[0]}"
+        if [[ -z "$SBREF_m" ]]; then
+            echo "No SBREF files found."
+            exit 1
+        else
+            echo "Using SBREF: $SBREF_m"
+        fi
+        if [[ "$SBREF_m" == *.nii ]]; then
+            BREF_MASTER_nii="$SUBJECT_OUTPUT_DIR/${SUBJECT}_${SESSION}_BREF_MASTER.nii"
+            cp "${SBREF_m}" "${BREF_MASTER_nii}"
+            gzip "${BREF_MASTER_nii}"
+            rm "${BREF_MASTER_nii}"
+            echo "Compressed to: $FILE"
+        else
+            cp "${SBREF_m}" "${BREF_MASTER}"
+        fi
+        # Make a note of what was run
+        mc_note=$SUBJECT_OUTPUT_DIR/reference_method_notes.txt
+        echo "sbref - ${SBREF_m} was used as BREF_MASTER" >> $mc_note
     fi
-    if [[ "$SBREF_m" == *.nii ]]; then
-        BREF_MASTER_nii="$SUBJECT_OUTPUT_DIR/${SUBJECT}_${SESSION}_BREF_MASTER.nii"
-        cp "${SBREF_m}" "${BREF_MASTER_nii}"
-        gzip "${BREF_MASTER_nii}"
-        rm "${BREF_MASTER_nii}"
-        echo "Compressed to: $FILE"
-    else
-        cp "${SBREF_m}" "${BREF_MASTER}"
-    fi
-    # Make a note of what was run
-    mc_note=$SUBJECT_OUTPUT_DIR/reference_method_notes.txt
-    echo "sbref - ${SBREF_m} was used as BREF_MASTER" >> $mc_note
     # Make sure header is nice
     fslreorient2std "$BREF_MASTER"
 fi
+
+# Find all the BOLD runs
+BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}*_bold*.nii*" | sort))    
+if [ ${#BOLD_FILES[@]} -eq 0 ]; then
+    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}_task-${TASK}"
+    exit 1
+else
+    echo "Found ${#BOLD_FILES[@]} run(s) to process"
+fi
+
+# ============================================================
+# BBREGISTER: BREF_MASTER -> FreeSurfer anatomy (once/session)
+# ============================================================
 echo ""
 echo "=========================================="
 echo "Running bbregister if not run already (BREF_MASTER -> FS T1)"
@@ -171,52 +191,10 @@ echo "bbregister outputs:"
 echo "  dat:    $BBREG_DAT"
 echo "  fslmat: $SBREF2FS_FSLMAT"
 echo "  fs T1:  $FS_T1_NII"
-
-
-
-
-
-
-
-
-
-
-
-# ************************************************
-# ************************************************
-# (2) sbref_i to sbref_master 
+# ============================================================
+# MCFLIRT: 
+# ============================================================
 # Process each run
-BREF_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_sbref*.nii*" | sort))    
-run_counter=0
-for BREF_FILE in "${BREF_FILES[@]}"; do
-    run_counter=$((run_counter + 1))
-    read RUN_LABEL TASK <<< "$(get_labels "$BREF_FILE")"
-    flirt \
-        -in $BREF_FILE \
-        -ref $BREF_MASTER -dof 6 \
-        -cost normcorr \
-        -omat "${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master.mat" \
-        -out "${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master"
-done
-
-
-
-
-
-
-
-# ************************************************
-# ************************************************
-# (3) MCFLIRT & concatenate
-# Find all the BOLD runs
-BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_bold*.nii*" | sort))    
-if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}"
-    exit 1
-else
-    echo "Found ${#BOLD_FILES[@]} run(s) to process"
-fi
-
 run_counter=0
 for BOLD_FILE in "${BOLD_FILES[@]}"; do
     run_counter=$((run_counter + 1))
@@ -226,10 +204,15 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     echo "Processing run ${run_counter}/${#BOLD_FILES[@]}"
     echo "=========================================="
     
-    read RUN_LABEL TASK <<< "$(get_labels "$BOLD_FILE")"
+    # Extract run label from filename if present
+    if [[ "$BOLD_FILE" =~ run-([0-9]+) ]]; then
+        RUN_LABEL="run-${BASH_REMATCH[1]}"
+        echo "Run: ${RUN_LABEL}"
+    else
+        RUN_LABEL=""
+        echo "Run: (no run label)"
+    fi
     
-    # corresponding sbref
-    SBREF_i=$(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}_${TASK}_${RUN_LABEL}*sbref*.nii*" | head -n 1)
     # Create work directory for this run
     if [ -n "$RUN_LABEL" ]; then
         WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}"
@@ -256,7 +239,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     MCFLIRT_MATS_DIR="${WORK_DIR}/bold_mcf.mat"
     if [[ ! -d "${MCFLIRT_MATS_DIR}" ]]; then
         mcflirt -in "${BOLD_FILE}" \
-                -reffile "${SBREF_i}" \
+                -reffile "${BREF_MASTER}" \
                 -out "${MCFLIRT_OUTPUT_name}" \
                 -mats \
                 -plots \
@@ -290,21 +273,10 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     mkdir -p "${COMBINED_MATS_DIR}"
 
     # mcflirt mats are typically MAT_0000.. ; applyxfm4D with -fourdigit expects MAT_0000 naming
-    sbref_i_to_sbref_m="${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master.mat"
     for M in "${MCFLIRT_MATS_DIR}"/MAT_*; do
         BN=$(basename "$M")
-        
-        # Step 1: Concatenate VOL->SBREF_i with SBREF_i->SBREF_MASTER
-        # Result: VOL->SBREF
-        TMP_MAT="${COMBINED_MATS_DIR}/tmp_${BN}"
-        convert_xfm -omat "$TMP_MAT" -concat "${sbref_i_to_sbref_m}" "$M"
-        
-        # Step 2: Concatenate VOL->SBREF_ma with SBREF->FS
-        # Result: VOL->FS (your final combined transform)
-        convert_xfm -omat "${COMBINED_MATS_DIR}/${BN}" -concat "${SBREF2FS_FSLMAT}" "$TMP_MAT"
-        
-        # Clean up temporary file
-        rm "$TMP_MAT"
+        # Combined = (SBREF->FS) ∘ (VOL->SBREF)  i.e.  SBREF2FS * M
+        convert_xfm -omat "${COMBINED_MATS_DIR}/${BN}" -concat "${SBREF2FS_FSLMAT}" "$M" 
     done
 
     # BIDS STYLE NAMING 
@@ -314,27 +286,15 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     # We want to keep the native resolution though...
     # take first volume
     # Extract first motion-corrected volume as reference
-    RES_REF_CORRECT_HD="${WORK_DIR}/res_ref_correct_header.nii.gz"
     RES_REF="${WORK_DIR}/res_ref.nii.gz"
     fslroi "${BOLD_FILE}" "${RES_REF}" 0 1
-    
-    
-    # ********************
     # get voxel size from BOLD
     vox=$(fslval "${RES_REF}" pixdim1)
-    flirt -in "${FS_T1_NII}" -ref "${FS_T1_NII}" -applyisoxfm "${vox}" -out "${RES_REF_CORRECT_HD}"
+
     # resample the FS T1 to that voxel size (still FS space)
     # -> CORRECT HEADER
-
-
-    # # Extract first volume from BOLD (preserves exact geometry)
-    # fslroi "${BOLD_FILE}" "${WORK_DIR}/bold_vol0.nii.gz" 0 1
-
-    # # Transform T1 to match BOLD's grid exactly
-    # flirt -in "${FS_T1_NII}" -ref "${WORK_DIR}/bold_vol0.nii.gz" \
-    #     -applyxfm -init "${SBREF2FS_FSLMAT}" \
-    #     -out "${RES_REF_CORRECT_HD}"
-
+    RES_REF_CORRECT_HD="${WORK_DIR}/res_ref_correct_header.nii.gz"
+    flirt -in "${FS_T1_NII}" -ref "${FS_T1_NII}" -applyisoxfm "${vox}" -out "${RES_REF_CORRECT_HD}"
     
     if [ ! -f "${BOLD_FS_OUT}" ]; then
         
@@ -397,3 +357,11 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     # rm -rf "${WORK_DIR}"
     
 done
+
+echo ""
+echo "=========================================="
+echo "All Runs Completed Successfully!"
+echo "=========================================="
+echo "Processed ${run_counter} run(s)"
+echo "Output directory: ${SUBJECT_OUTPUT_DIR}"
+echo "Done!"

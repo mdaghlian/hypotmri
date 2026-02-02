@@ -13,7 +13,6 @@ usage() {
     echo "Required Arguments:"
     echo "  --input_dir     Path to the bold + sbref files"
     echo "  --bids_dir    Path to the output derivatives directory"
-    echo "  --bids_filter_file  Path to bids_filter_file " 
     echo "  --sub           Subject label (e.g., sub-01)"
     echo ""
     echo "Optional Arguments:"
@@ -26,13 +25,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --input_dir)        INPUT_DIR="$2"; shift 2 ;;
         --bids_dir)         BIDS_DIR="$2"; shift 2 ;;
-        --bids_filter_file)  BIDS_FILTER_FILE="$2"; shift 2;;
         --sub)              SUBJECT="$2"; shift 2 ;;
         --help)             usage ;;
         *)                  echo "Unknown argument: $1"; usage ;;
     esac
 done
-
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
@@ -44,7 +41,10 @@ echo " Subject:   $SUBJECT"
 echo "-------------------------------------------------------"
 
 # Construct paths
-FPREP_SES=$BIDS_DIR/$SUBJECT/ses-fprep/func
+FPREP_SES="${BIDS_DIR}/${SUBJECT}/ses-fprep/func"
+if [[ -e "${FPREP_SES}" ]]; then
+    rm -rf ${FPREP_SES}
+fi
 mkdir -p "${FPREP_SES}"
 
 # Find all the BOLD runs
@@ -90,7 +90,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
 cat <<EOF > "$FPREP_JSON"
 {
   "RepetitionTime": $BOLD_TR,
-  "TaskName": "$TASK_LABEL"
+  "TaskName": "${TASK_LABEL}"
 }
 EOF
     cp $BOLD_FILE $FPREP_BOLD
@@ -101,6 +101,13 @@ echo ""
 echo "=========================================="
 echo "Copied it all over - now for fmriprep"
 echo "=========================================="
+# [1] Create .bidsignore if doesn't exist
+BIDS_IGNORE="${BIDS_DIR}/.bidsignore"
+if [[ ! -f "${BIDS_IGNORE}" ]]; then
+    printf "**/ses-01/func/\n**/ses-01/fmap/\n" >> "$BIDS_IGNORE"
+fi
+# Create bids ignore, if not already there 
+echo $SCRIPT_DIR/bidsfilter.json
 
 fmriprep-docker \
   $BIDS_DIR \
@@ -109,8 +116,10 @@ fmriprep-docker \
   --participant-label $SUBJECT \
   --fs-subjects-dir  $SUBJECTS_DIR \
   --fs-license-file /Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/code/license.txt \
-  --skip-bids-validation \
-  --omp-nthreads 8 \
-  --output-spaces func T1w fsnative \
+  --output-spaces func fsnative \
   -w $BIDS_DIR/../BIDSWF \
-  --bids-filter-file $BIDS_FILTER_FILE --session-label fprep
+  --session-label fprep --skip-bids-validation \
+  --ignore fieldmaps slicetiming 
+  
+# --bids-filter-file "$SCRIPT_DIR/bidsfilter.json" 
+#   --session-label fprep --skip-bids-validation # --bids-filter-file $BIDS_FILTER_FILE  --omp-nthreads 8 \
