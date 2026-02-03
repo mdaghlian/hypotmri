@@ -320,28 +320,19 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     
     
     # ********************
-    # get voxel size from BOLD
+    # get voxel size from BOLD -> TODO improve this reslicing here
+    # -> don't like how hacky it is atm 
     vox=$(fslval "${RES_REF}" pixdim1)
     flirt -in "${FS_T1_NII}" -ref "${FS_T1_NII}" -applyisoxfm "${vox}" -out "${RES_REF_CORRECT_HD}"
     # resample the FS T1 to that voxel size (still FS space)
     # -> CORRECT HEADER
-
-
-    # # Extract first volume from BOLD (preserves exact geometry)
-    # fslroi "${BOLD_FILE}" "${WORK_DIR}/bold_vol0.nii.gz" 0 1
-
-    # # Transform T1 to match BOLD's grid exactly
-    # flirt -in "${FS_T1_NII}" -ref "${WORK_DIR}/bold_vol0.nii.gz" \
-    #     -applyxfm -init "${SBREF2FS_FSLMAT}" \
-    #     -out "${RES_REF_CORRECT_HD}"
-
     
     if [ ! -f "${BOLD_FS_OUT}" ]; then
         
         # Everything in full massive high resolution
         # applyxfm4D "${BOLD_FILE}" "${FS_T1_NII}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
         
-        # Use sbrefmaster to keep native resolution?
+        # Use native resolution?
         applyxfm4D "${BOLD_FILE}" "${RES_REF_CORRECT_HD}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
    
          
@@ -373,10 +364,8 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
         SURF_OUT="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_space-fsnative_hemi-${HEMI_GIFTI}_bold.func.gii"
         
         if [[ ! -f "${SURF_OUT}" ]]; then
-            echo $BOLD_FS_OUT
-            echo $HEMI
-            echo $SURF_OUT
-            echo $SUBJECT
+            # TODO -> MOVE DIRECTLY FROM RAW -> SURFACE, using concatenated transforms
+            # atm this adds another interpolation(?)
             mri_vol2surf \
                 --mov "${BOLD_FS_OUT}" \
                 --hemi "${HEMI}" \
@@ -384,7 +373,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
                 --o "${SURF_OUT}" \
                 --trgsubject "${SUBJECT}" \
                 --cortex --regheader $SUBJECT 
-            # --projfrac 0.5 \            --surf-fwhm 3      --reg "${BBREG_DAT}" \
+            # --projfrac 0.5  --surf-fwhm 3
             
             echo "Created surface timeseries: ${SURF_OUT}"
         else

@@ -44,7 +44,7 @@ fi
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
-echo "Processing: SDC (AFNI Method)"
+echo "Processing: SDC"
 echo "-------------------------------------------------------"
 echo " BIDS Root: $BIDS_DIR"
 echo " Output:    $OUTPUT_DIR"
@@ -57,14 +57,12 @@ echo "-------------------------------------------------------"
 FUNC_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/func"
 FMAP_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/fmap"
 SUBJECT_OUTPUT_DIR="${OUTPUT_DIR}/${SUBJECT}/${SESSION}"
-CURRENT_DIR=$PWD
+
 # Create output directories
 mkdir -p "${SUBJECT_OUTPUT_DIR}"
-# remove anything inside 
-cd $SUBJECT_OUTPUT_DIR
 
 echo "=========================================="
-echo "Running AFNI distortion correction"
+echo "Running topup correction"
 echo "Subject: ${SUBJECT}"
 echo "Session: ${SESSION}"
 echo "Task: ${TASK}"
@@ -78,6 +76,19 @@ if [ ${#BOLD_FILES[@]} -eq 0 ]; then
 else
     echo "Found ${#BOLD_FILES[@]} run(s) to process"
 fi
+
+# Convert PE direction to FSL format
+convert_pe_to_vector() {
+    case $1 in
+        "j-") echo "0 -1 0" ;;
+        "j") echo "0 1 0" ;;
+        "i-") echo "-1 0 0" ;;
+        "i") echo "1 0 0" ;;
+        "k-") echo "0 0 -1" ;;
+        "k") echo "0 0 1" ;;
+        *) echo "Error: Unknown PE direction: $1"; exit 1 ;;
+    esac
+}
 
 # Process each run
 run_counter=0
@@ -105,14 +116,14 @@ for BOLD in "${BOLD_FILES[@]}"; do
         WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}"
     fi
     mkdir -p "${WORK_DIR}"
-    rm -rf $WORK_DIR/*
+    
     # Extract base filenames
     BOLD_BASE="${BOLD##*/}"       
     BOLD_BASE="${BOLD_BASE%.gz}"  # Removes .gz if present
     BOLD_BASE="${BOLD_BASE%.nii}" # Removes .nii if present
     BOLD_BASE="${BOLD_BASE%_bold}" # Removes _bold if present
 
-    # Find corresponding reverse-PE (TOPUP) and SBREF files
+    # Find corresponding TOPUP and SBREF files
     if [ -n "$RUN_LABEL" ]; then
         TOPUP=$(find "${FMAP_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*epi.nii*" | head -n 1)
         SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*sbref.nii*" | head -n 1)
@@ -121,116 +132,76 @@ for BOLD in "${BOLD_FILES[@]}"; do
         SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*sbref.nii*" | grep -v "run-" | head -n 1)
     fi
     
-    # Get number of volumes
+    # Create the TOPUP pair that fsl needs
+    echo "Creating TOPUP pair (mean images)..."
     nvolsTP=$(fslnvols "$TOPUP")
     nvolsB=$(fslnvols "$BOLD")
+    start=$(($nvolsB - $nvolsTP))
+    # Use last N vols of bold paired with TOPUP file 
+    fslroi "${BOLD}"   "${WORK_DIR}/fw.nii.gz" $start $nvolsTP
+    fslroi "${TOPUP}" "${WORK_DIR}/bw.nii.gz"  0 $nvolsTP
+
+    # Merge into 4D with 2 volumes
+    fslmerge -t "${WORK_DIR}/fw_bw_pair.nii.gz" \
+        "${WORK_DIR}/fw.nii.gz" \
+        "${WORK_DIR}/bw.nii.gz"
+
     
-    echo ""
-    echo "Volume information:"
-    echo "  BOLD volumes: ${nvolsB}"
-    echo "  Reverse-PE volumes: ${nvolsTP}"
-    
-    # Read phase encoding direction from jsons
+    # Read phase encoding direction & total readout time from jsons
     BOLD_JSON="${BOLD%.nii*}.json"
     TOPUP_JSON="${TOPUP%.nii*}.json"
     BOLD_PE=$(grep -o '"PhaseEncodingDirection"[[:space:]]*:[[:space:]]*"[^"]*"' "${BOLD_JSON}" | cut -d'"' -f4)
     TOPUP_PE=$(grep -o '"PhaseEncodingDirection"[[:space:]]*:[[:space:]]*"[^"]*"' "${TOPUP_JSON}" | cut -d'"' -f4)
-    
+    BOLD_TRT=$(grep -o '"TotalReadoutTime"[[:space:]]*:[[:space:]]*[0-9.]*' "${BOLD_JSON}" | awk '{print $2}')
+    TOPUP_TRT=$(grep -o '"TotalReadoutTime"[[:space:]]*:[[:space:]]*[0-9.]*' "${TOPUP_JSON}" | awk '{print $2}')
     echo ""
     echo "Phase encoding parameters:"
     echo "  BOLD PE direction: ${BOLD_PE}"
-    echo "  Reverse-PE direction: ${TOPUP_PE}"
+    echo "  TOPUP PE direction: ${TOPUP_PE}"
+    echo "  BOLD Total Readout Time: ${BOLD_TRT}"
+    echo "  TOPUP Total Readout Time: ${TOPUP_TRT}"
     
-    # **** AFNI CONVERT  ****
+    BOLD_PE_VEC=$(convert_pe_to_vector "${BOLD_PE}")
+    TOPUP_PE_VEC=$(convert_pe_to_vector "${TOPUP_PE}")
+    echo "Writing TOPUP acquisition parameters..."
+    # 1 row per volume, in order 
+    # gives the important info for fsl topup
+    {
+    for i in $(seq 1 "$nvolsTP"); do
+        echo "${BOLD_PE_VEC} ${BOLD_TRT}"
+    done
+    for i in $(seq 1 "$nvolsTP"); do
+        echo "${TOPUP_PE_VEC} ${TOPUP_TRT}"
+    done
+    } > "${WORK_DIR}/acqparams.txt"
 
-    echo ""
-    echo "Converting BOLD to AFNI format..."
-    if [[ "$BOLD" == *.gz ]]; then
-        gunzip -c "$BOLD" > "${WORK_DIR}/bold_temp.nii"
-        3dcopy "${WORK_DIR}/bold_temp.nii" "${WORK_DIR}/bold+orig"
-        rm "${WORK_DIR}/bold_temp.nii"
-    else
-        3dcopy "$BOLD" "${WORK_DIR}/bold+orig"
-    fi
-    
-    # Convert reverse-PE to AFNI format
-    echo "Converting reverse-PE to AFNI format..."
-    if [[ "$TOPUP" == *.gz ]]; then
-        gunzip -c "$TOPUP" > "${WORK_DIR}/reverse_temp.nii"
-        3dcopy "${WORK_DIR}/reverse_temp.nii" "${WORK_DIR}/reverse+orig"
-        # rm "${WORK_DIR}/reverse_temp.nii"
-    else
-        3dcopy "$TOPUP" "${WORK_DIR}/reverse+orig"
-    fi
-    
-    # Calculate volume indices for AFNI
-    # Extract last N volumes from BOLD to match reverse-PE volumes
-    start_idx=$(($nvolsB - $nvolsTP))
-    end_idx=$(($nvolsB - 1))
-    IdxEPI="[${start_idx}..${end_idx}]"
-    IdxRev="[0..$((nvolsTP - 1))]"
-    
-    echo ""
-    echo "Running AFNI unWarpEPIfloat.py..."
-    echo "  Last ${nvolsTP} BOLD images: ${IdxEPI}"
-    echo "  Reverse-PE images: ${IdxRev}"
+    echo " Running TOPUP..."
+    topup \
+      --imain="${WORK_DIR}/fw_bw_pair.nii.gz" \
+      --datain="${WORK_DIR}/acqparams.txt" \
+      --config=b02b0.cnf \
+      --out="${WORK_DIR}/topup_results" 
 
-    # Run AFNI's distortion correction
-    # -f forward -r reverse -d  
-    cd $WORK_DIR   
-    # python ./unWarpEPIfloat.py \
-    python "$SCRIPT_DIR/unWarpEPIfloat.py" \
-        -f "bold+orig${IdxEPI}" \
-        -r "reverse+orig${IdxRev}" \
-        -d "bold" \
-        -s "${BASE_NAME}"
+    echo "Applying TOPUP to full BOLD time series & BREF..."
     
-    echo "Extracting corrected BOLD data..."
-    # The unWarpEPIfloat.py output is in unWarpOutput_*/06_*_HWV.nii.gz
-    UNWARP_OUTPUT=$(find "${WORK_DIR}/unWarpOutput_TS" -name "06_*_HWV.nii.gz" | head -n 1)
-    if [ ! -f "$UNWARP_OUTPUT" ]; then
-        echo "Error: AFNI unwarp output not found!"
-        exit 1
-    fi
-    
-    # Copy the unwarped output to final location
-    cp "$UNWARP_OUTPUT" "${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_bold_sdc.nii.gz"
-    
-    echo "Applying distortion correction to SBREF..."
-    # For SBREF, we need to apply the same correction
-    # Convert SBREF to AFNI format
-    if [[ "$SBREF" == *.gz ]]; then
-        gunzip -c "$SBREF" > "${WORK_DIR}/sbref_temp.nii"
-        3dcopy "${WORK_DIR}/sbref_temp.nii" "${WORK_DIR}/sbref+orig"
-        rm "${WORK_DIR}/sbref_temp.nii"
-    else
-        3dcopy "$SBREF" "${WORK_DIR}/sbref+orig"
-    fi
-    
-    # Apply the same warp to SBREF using the displacement field from the BOLD correction
-    # The warp is stored in the unWarpOutput directory
-    WARP_FILE=$(find "${WORK_DIR}/unWarpOutput_TS" -name "*_WARP.nii.gz" | head -n 1)
-    
-    if [ -f "$WARP_FILE" ]; then
-        3dNwarpApply \
-            -source "${WORK_DIR}/sbref+orig" \
-            -nwarp "$WARP_FILE" \
-            -prefix "${WORK_DIR}/sbref_sdc.nii.gz"
-        
-        cp "${WORK_DIR}/sbref_sdc.nii.gz" "${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_sbref_sdc.nii.gz"
-    else
-        echo "Warning: Warp file not found for SBREF correction"
-        echo "Copying original SBREF as placeholder"
-        cp "$SBREF" "${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_sbref_sdc.nii.gz"
-    fi
-    
+    applytopup \
+        --imain="${SBREF}" \
+        --datain="${WORK_DIR}/acqparams.txt" \
+        --inindex=1 \
+        --topup="${WORK_DIR}/topup_results" \
+        --method=jac \
+        --out="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_sdc_sbref.nii.gz"
+
+    applytopup \
+        --imain="${BOLD}" \
+        --datain="${WORK_DIR}/acqparams.txt" \
+        --inindex=1 \
+        --topup="${WORK_DIR}/topup_results" \
+        --method=jac \
+        --out="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_sdc_bold.nii.gz"
     # Optional: Clean up working directory
     # Uncomment to remove intermediate files
-    # echo "Cleaning up intermediate files..."
-    # rm -f "${WORK_DIR}"/*+orig.*
-    # rm -rf "${WORK_DIR}/unWarpOutput_unwarp_out"
-    
-    echo "Run ${run_counter} completed!"
+    # rm -rf "${WORK_DIR}"
     
 done
 
@@ -241,4 +212,3 @@ echo "=========================================="
 echo "Processed ${run_counter} run(s)"
 echo "Output directory: ${SUBJECT_OUTPUT_DIR}"
 echo "Done!"
-cd $CURRENT_DIR
