@@ -1,12 +1,23 @@
 # Pipeline for processing hypotony data
 
 TODO:
+
 [] setup+installation instructions + bidsifying 
+
 [] In general improve the session name handling
+
 [] Better docs; examples QC popups
+
 [] Containerisation 
 
+
 ## setup
+Requirements: 
+
+Local:
+- fsl 
+- freeview + freesurfer
+- 
 ### [1] Installation - TODO
 ### [2] BIDS(ish)ification - TODO
 

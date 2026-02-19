@@ -6,17 +6,12 @@ set -e
 # assumes 1 sbref per bold, taken at the same time, so they are 
 # good references for motion correction
 # (1) Select first sbref as "master" - coregister to anatomy with bbregister
-# (2) MCFLIRT per run, using the corresponding sbref_i
-# (3) Coregister each sbref_i to sbref_master
-# (4) Concatenate transforms
-# TODO: 
-# option for missing sbrefs
-# projfrac different 
-# - Vol -> sbref_i -> sbref_master -> anatomy 
+# (2) MCFLIRT per run DIRECTLY TO bref_master
+# (3) Concatenate transforms
+# - Vol -> sbref_master -> anatomy 
 
 # --- Default Values ---
 SESSION="ses-01"
-BREF_DOF="6"
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" &> /dev/null && pwd)
 
 # --- Usage Function ---
@@ -40,7 +35,6 @@ while [[ $# -gt 0 ]]; do
         --output_dir)   OUTPUT_DIR="$2"; shift 2 ;;
         --sub)          SUBJECT="$2"; shift 2 ;;
         --ses)          SESSION="$2"; shift 2 ;;
-        --bref_dof)     BREF_DOF="$2"; shift 2;;
         --help)         usage ;;
         *)              echo "Unknown argument: $1"; usage ;;
     esac
@@ -121,7 +115,7 @@ if [[ ! -f "$BREF_MASTER" ]]; then
     fi
     # Make a note of what was run
     mc_note=$SUBJECT_OUTPUT_DIR/reference_method_notes.txt
-    echo "sbref - ${SBREF_m} was used as BREF_MASTER. bref DOF was ${BREF_DOF}" >> $mc_note
+    echo "sbref - ${SBREF_m} was used as BREF_MASTER" >> $mc_note
     # Make sure header is nice
     fslreorient2std "$BREF_MASTER"
 fi
@@ -144,7 +138,7 @@ if [[ ! -f "$BBREG_DAT" || ! -f "$SBREF2FS_FSLMAT" ]]; then
     # Initialise with flirt
     flirt \
         -in $BREF_MASTER \
-        -ref $FS_T1_NII -dof $BREF_DOF \
+        -ref $FS_T1_NII -dof 6 \
         -cost mutualinfo -omat $SUBJECT_OUTPUT_DIR/sbref_initial_reg.mat
 
     # Convert initial FLIRT output matrix to FreeSurfer format
@@ -182,35 +176,6 @@ echo "  fs T1:  $FS_T1_NII"
 
 
 
-
-
-# ************************************************
-# ************************************************
-# (2) sbref_i to sbref_master 
-# Process each run
-BREF_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_sbref*.nii*" | sort))    
-run_counter=0
-for BREF_FILE in "${BREF_FILES[@]}"; do
-    run_counter=$((run_counter + 1))
-    read RUN_LABEL TASK <<< "$(get_labels "$BREF_FILE")"
-    flirt \
-        -in $BREF_FILE \
-        -ref $BREF_MASTER -dof 6 \
-        -cost normcorr \
-        -omat "${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master.mat" \
-        -out "${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master"
-done
-
-
-
-
-
-
-
-# ************************************************
-# ************************************************
-# (3) MCFLIRT & concatenate
-# Find all the BOLD runs
 BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_bold*.nii*" | sort))    
 if [ ${#BOLD_FILES[@]} -eq 0 ]; then
     echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}"
@@ -258,7 +223,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     MCFLIRT_MATS_DIR="${WORK_DIR}/bold_mcf.mat"
     if [[ ! -d "${MCFLIRT_MATS_DIR}" ]]; then
         mcflirt -in "${BOLD_FILE}" \
-                -reffile "${SBREF_i}" \
+                -reffile "${BREF_MASTER}" \
                 -out "${MCFLIRT_OUTPUT_name}" \
                 -mats \
                 -plots \
@@ -292,21 +257,10 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     mkdir -p "${COMBINED_MATS_DIR}"
 
     # mcflirt mats are typically MAT_0000.. ; applyxfm4D with -fourdigit expects MAT_0000 naming
-    sbref_i_to_sbref_m="${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}_brefi_to_bref_master.mat"
     for M in "${MCFLIRT_MATS_DIR}"/MAT_*; do
         BN=$(basename "$M")
-        
-        # Step 1: Concatenate VOL->SBREF_i with SBREF_i->SBREF_MASTER
-        # Result: VOL->SBREF
-        TMP_MAT="${COMBINED_MATS_DIR}/tmp_${BN}"
-        convert_xfm -omat "$TMP_MAT" -concat "${sbref_i_to_sbref_m}" "$M"
-        
-        # Step 2: Concatenate VOL->SBREF_ma with SBREF->FS
-        # Result: VOL->FS (your final combined transform)
-        convert_xfm -omat "${COMBINED_MATS_DIR}/${BN}" -concat "${SBREF2FS_FSLMAT}" "$TMP_MAT"
-        
-        # Clean up temporary file
-        rm "$TMP_MAT"
+        # Combined = (SBREF->FS) ∘ (VOL->SBREF)  i.e.  SBREF2FS * M
+        convert_xfm -omat "${COMBINED_MATS_DIR}/${BN}" -concat "${SBREF2FS_FSLMAT}" "$M" 
     done
 
     # BIDS STYLE NAMING 
@@ -316,25 +270,22 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     # We want to keep the native resolution though...
     # take first volume
     # Extract first motion-corrected volume as reference
-    RES_REF_CORRECT_HD="${WORK_DIR}/res_ref_correct_header.nii.gz"
     RES_REF="${WORK_DIR}/res_ref.nii.gz"
     fslroi "${BOLD_FILE}" "${RES_REF}" 0 1
-    
-    
-    # ********************
-    # get voxel size from BOLD -> TODO improve this reslicing here
-    # -> don't like how hacky it is atm 
+    # get voxel size from BOLD
     vox=$(fslval "${RES_REF}" pixdim1)
-    flirt -in "${FS_T1_NII}" -ref "${FS_T1_NII}" -applyisoxfm "${vox}" -out "${RES_REF_CORRECT_HD}"
+
     # resample the FS T1 to that voxel size (still FS space)
     # -> CORRECT HEADER
+    RES_REF_CORRECT_HD="${WORK_DIR}/res_ref_correct_header.nii.gz"
+    flirt -in "${FS_T1_NII}" -ref "${FS_T1_NII}" -applyisoxfm "${vox}" -out "${RES_REF_CORRECT_HD}"
     
     if [ ! -f "${BOLD_FS_OUT}" ]; then
         
         # Everything in full massive high resolution
         # applyxfm4D "${BOLD_FILE}" "${FS_T1_NII}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
         
-        # Use native resolution?
+        # Use sbrefmaster to keep native resolution?
         applyxfm4D "${BOLD_FILE}" "${RES_REF_CORRECT_HD}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
    
          
@@ -366,8 +317,6 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
         SURF_OUT="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_space-fsnative_hemi-${HEMI_GIFTI}_bold.func.gii"
         
         if [[ ! -f "${SURF_OUT}" ]]; then
-            # TODO -> MOVE DIRECTLY FROM RAW -> SURFACE, using concatenated transforms
-            # atm this adds another interpolation(?)
             mri_vol2surf \
                 --mov "${BOLD_FS_OUT}" \
                 --hemi "${HEMI}" \
@@ -375,7 +324,6 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
                 --o "${SURF_OUT}" \
                 --trgsubject "${SUBJECT}" \
                 --cortex --regheader $SUBJECT 
-            # --projfrac 0.5  --surf-fwhm 3
             
             echo "Created surface timeseries: ${SURF_OUT}"
         else
@@ -392,3 +340,11 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     # rm -rf "${WORK_DIR}"
     
 done
+
+echo ""
+echo "=========================================="
+echo "All Runs Completed Successfully!"
+echo "=========================================="
+echo "Processed ${run_counter} run(s)"
+echo "Output directory: ${SUBJECT_OUTPUT_DIR}"
+echo "Done!"
