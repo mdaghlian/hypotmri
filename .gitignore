@@ -2,3 +2,5 @@
 *.nii
 *__pycache*
 *.pkl
+dockfiles/*
+license.txt
