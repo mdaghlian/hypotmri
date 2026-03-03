@@ -1,15 +1,12 @@
 # Fmriprep
-How to install fmriprep docker quickly
-- TODO prescribe a specific version. (25.2.4) ?
-```bash
-mamba create -n fmriprep001 python
-conda activate fmriprep001 
-python -m pip install fmriprep-docker
-```
+- check you have installed everything correctly (following s00_anat_pipeline.md)
+- Pipeline assumes one set of anatomies
+- for s01_fmriprep_anat_only.sh; just pass the BIDS directory; subject id; & name of the session with the anatomy inside 
+- This script will create a "fake" fmriprep session (fprep) to put all of our preprocessed stuff inside later
+- For now just doing the anatomy
 
-# Run fmriprep anat only
 ```bash
-PROJ_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
-SUBJECTS_DIR="${PROJ_DIR}/derivatives/freesurfer"
-bash s01_fmriprep_anat_only.sh --bids_dir $BIDS_DIR --sub hp01
+# path to BIDS directory
+BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
+bash s01_fmriprep_anat_only.sh --bids_dir $BIDS_DIR --sub 01 --ses 01
 ```

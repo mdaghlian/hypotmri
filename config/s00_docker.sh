@@ -1,34 +1,67 @@
 #!/bin/bash
-dock_cmd=(
-    docker run --rm "${NEURODOCKER_IMAGE}"
-    generate "${CONTAINER_TYPE}"
-        --pkg-manager apt
-        --base-image debian:bullseye-slim
-        --yes
-        --miniconda
-            version=latest
-            env_name=b14
-            conda_install="python=3.11"
-            pip_install="nibabel neuropythy==0.12.16"
-        --miniconda
-            version=latest
-            env_name=autoflat
-            conda_install="python=3.11"
-            pip_install="autoflatten==1.0.6"
-)
+echo "Pulling relevant docker images... "
+# [1] Neurodocker image -> for installing everything else
+docker pull "${NEURODOCKER_IMAGE}"
 
+# [2] Fmriprep 
+docker pull "${FPREP_IMAGE}"
+
+
+
+
+
+
+
+# *************************************************************************************
+# *************************************************************************************
+# *************************************************************************************
+# *************************************************************************************
+# BELOW IS MESS -> STILL EDITING ...
+
+# [3] Afni -> is very tricky to setup with neurodocker atm, so will do it directly
+# docker pull afni/afni_make_build:$AFNI_VERSION
+
+
+# [3] FSL+freesurfer 
+# dock_cmd=(
+#     docker run --rm "${NEURODOCKER_IMAGE}"
+#     generate "${CONTAINER_TYPE}"
+#         --pkg-manager apt
+#         --base-image debian:bullseye-slim
+#         --yes
+#         --fsl version=$FSL_VERSION
+# )
+
+
+
+# dock_cmd=(
+#     docker run --rm "${NEURODOCKER_IMAGE}"
+#     generate "${CONTAINER_TYPE}"
+#         --pkg-manager yum
+#         --base-image fedora:40
+#         --yes
+#         --afni method=binaries version=latest
+# )
+
+
+# --miniconda
+#     version=latest
+#     env_name=b14
+#     conda_install="python=3.11"
+#     pip_install="nibabel neuropythy==0.12.16"
 # --fsl version=6.0.7.1
 # --afni method=source version=latest 
 #     conda_install="python=3.11 nibabel" 
 #     pip_install="neuropythy=0.12.16"
 # --afni method=binaries version=latest 
 
-dock_id="a03"
-echo "${dock_cmd[@]}"
-rm -f "${DOCKFILE_DIR}"/*
-"${dock_cmd[@]}" > "${DOCKFILE_DIR}/${dock_id}.Dockerfile"
-docker build  -t hypot-${dock_id} -f "${DOCKFILE_DIR}/${dock_id}.Dockerfile" .
-# --platform linux/amd64
+# dock_id="ndock_fsl"
+# echo "${dock_cmd[@]}"
+# rm -f "${DOCKFILE_DIR}"/*
+# "${dock_cmd[@]}" > "${DOCKFILE_DIR}/${dock_id}.Dockerfile"
+# docker build --platform linux/arm64/v8 --tag ${dock_id} -f "${DOCKFILE_DIR}/${dock_id}.Dockerfile" .
+# docker build --tag ${dock_id} -f "${DOCKFILE_DIR}/${dock_id}.Dockerfile" .
+# 
 # https://repronim.org/neurodocker/user_guide/quickstart.html
 # --fsl version=${FSL_VERSION} \
 # --afni method=binaries version=latest \

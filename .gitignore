@@ -3,4 +3,5 @@
 *__pycache*
 *.pkl
 dockfiles/*
+/config/config_pipeline.sh
 license.txt

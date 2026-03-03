@@ -15,9 +15,10 @@ TODO:
 Requirements: 
 Local:
 
-- docker or singularity
-- fsl 
+- docker (TODO singularity as well)
+- mamba/conda
 - freeview + freesurfer
+- fsl (optional)
 
 add the following to your .bash_profile 
 ```bash
@@ -25,7 +26,7 @@ source "/path/to/this/folder/config/config_pipeline.sh"
 ```
 Close and reopen terminal, this should be available then 
 
-### [1] Downloads & Installation 
+### Downloads & Installation 
 *will create option to work with singularity too*
 
 Installing all the many, many, packages for neuroimaging analyses is a pain. Keeping it consistent, and reusable is even more of a pain. Fortunately we can use a couple of programs to manage the many packages and make installing a little easier
@@ -33,6 +34,7 @@ Installing all the many, many, packages for neuroimaging analyses is a pain. Kee
 [1] mamba/conda (required)
 This manages python environments. Basically, it allows you to create install a different python for each project. This is useful because different python programs have different requirements which often get in the way and cause havoc. Mamba is a speedy way to control this. You can also use conda, which will do the same things, but is a little slower. For installation instructions for mamba go to:
 - https://github.com/conda-forge/miniforge?tab=readme-ov-file#install 
+** If you want to use conda rather than mamba set PYPACKAGE_MANAGER=conda inside your config_pipeline.sh file **
 
 
 [2] Docker (required)
@@ -56,6 +58,8 @@ It is also important to have a way to view the images, to check registration, mo
 mamba create -n fslmamba -c conda-forge -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ fsl-base fsleyes
 # 2. Activate the environment
 conda activate fslmamba
+# 3. Try opening fsleyes
+fsleyes
 ```
 I quite like itksnap; but anything you are used is good. 
 
@@ -67,7 +71,19 @@ Vscode - use this to edit all of your programming files etc. It is also useful f
 [6] Everything else...
 Once you have this installed you are ready to go. All the other installation steps will be (hopefully!) handelled along the way by either *mamba* or *docker*. Remember for docker commands to work they need to be running  
 
+#### Automatic install of other requirements
+Once the above has been installed we then run some stuff to get everything started: 
 
+Assuming you have added  ```source "/path/to/this/folder/config/config_pipeline.sh"``` to your bash profile
+
+Open a new terminal 
+```bash
+cd "${PIPELINE_DIR}/config"
+# Install python environments
+bash s00_mamba.sh
+# Install the docker images 
+bash s00_docker.sh
+```
 
 
 ### [2] BIDS(ish)ification - TODO
@@ -86,9 +102,18 @@ Once you have this installed you are ready to go. All the other installation ste
 ### [3] Autoflatten (*may remove from final pipeline*)
 - Input: Subject freesurfer folder
 - Output: flattened cortical files
+
+# ---- REST NOT FULLY IMPLEMENTED ----
+
 ### [4] s04_pycortex (*may remove from final pipeline*)
 - Input: Subject freesurfer folder
 - Output: Pycortex files, for quick flattening & visualization
+
+
+
+
+
+
 ## functional
 
 ### [1] s01_sdc

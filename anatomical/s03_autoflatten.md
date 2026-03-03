@@ -1,13 +1,9 @@
 # s04 autoflatten - create flatmaps... 
 maybe useful for later plotting with pycortex
-
-
-[*] Create conda env with autoflatten
-- https://github.com/gallantlab/autoflatten
 ```bash
-mamba create -n autoflat002 python
-conda activate autoflat002
-pip install autoflatten
+conda activate autoflat
+BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
+FS_DIR=$BIDS_DIR/derivatives/freesurfer
 # run on a freesurfer subjects
-autoflatten $SUBJECTS_DIR/sub-hp01
+autoflatten $FS_DIR/sub-hp01
 ```

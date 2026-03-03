@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids_dir)         BIDS_DIR="$2"; shift 2 ;;
         --sub)              SUBJECT="$2"; shift 2 ;;
+        --ses)              SESSION="$2"; shift 2 ;;
         --help)             usage ;;
         *)                  echo "Unknown argument: $1"; usage ;;
     esac
@@ -35,12 +36,23 @@ echo "Running fmriprep - for anatomy "
 echo "-------------------------------------------------------"
 echo " Output:    $BIDS_DIR"
 echo " Subject:   $SUBJECT"
+echo " Session:   $SESSION"
 echo "-------------------------------------------------------"
 
 # [1] Create .bidsignore if doesn't exist
 BIDS_IGNORE="${BIDS_DIR}/.bidsignore"
 if [[ ! -f "${BIDS_IGNORE}" ]]; then
     printf "**/ses-01/func/\n**/ses-01/fmap/\n" >> "$BIDS_IGNORE"
+fi
+# [2] Create bids json if it doesn't exist
+BIDS_JSON="${BIDS_DIR}/dataset_description.json"
+if [[ ! -f "${BIDS_JSON}" ]]; then
+    printf "{\"Name\": \"Example dataset\", \"BIDSVersion\": \"1.0.2\"}" >> "$BIDS_JSON"
+fi
+# [3] Create freesurfer output, if it doesn't exist
+SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
+if [[ ! -f "${SUBJECTS_DIR}" ]]; then
+    mkdir -p "${SUBJECTS_DIR}"
 fi
 
 # Now create the fprep session
@@ -68,15 +80,22 @@ for file in "$ANAT_SRC"/*; do
     fi
 done
 
-fmriprep-docker \
-  $BIDS_DIR \
-  $BIDS_DIR/derivatives/fmriprep \
-  participant \
-  --participant-label $SUBJECT \
-  --fs-subjects-dir  $SUBJECTS_DIR \
-  --fs-license-file $BIDS_DIR/code/license.txt \
-  -w $BIDS_DIR/../BIDSWF --anat-only \
-  --omp-nthreads 8 --session-label fprep
+# -> using FMRIPREP with docker directly
+docker run --rm -it \
+  -v $BIDS_DIR:/data:ro \
+  -v $BIDS_DIR/derivatives/fmriprep:/out \
+  -v $BIDS_DIR/../BIDSWF:/work \
+  -v $SUBJECTS_DIR:/fsdir \
+  -v $BIDS_DIR/code/license.txt:/license.txt \
+  $FPREP_IMAGE \
+    /data /out participant \
+    --participant-label $SUBJECT \
+    --fs-subjects-dir /fsdir \
+    --fs-license-file /license.txt \
+    --work-dir /work \
+    --anat-only \
+    --omp-nthreads 8 \
+    --session-label fprep
 
 # Create a symlink between subject dir and the annoying way that fmriprep does 
 # freesurfer naming

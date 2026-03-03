@@ -1,6 +1,6 @@
 # s04 install pycortex for viewing & running
 
-** TODO - more details ** 
+** NOT DONE YET ** 
 [1] Create conda env for pycortex
 ```bash
 mamba create -n pycortex python
