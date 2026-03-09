@@ -20,7 +20,8 @@ export FPREP_VERSION="25.2.4"
 export FREESURFER_VERSION="7.3.2"
 export FSLICENSE="${PIPELINE_DIR}/config/license.txt"
 export FSL_VERSION="6.0.7.19"
-export AFNI_VERSION="AFNI_26.0.07"
+export AFNI_IMAGE="vnmd/afni_26.0.07"
+export NIGHRES_IMAGE=gianfrancof0/nighres:latest #vnmd/nighres_1.5.2"
 export PYPACKAGE_MANAGER="mamba"
 
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then

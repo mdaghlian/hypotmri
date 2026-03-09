@@ -2,6 +2,8 @@
 *.nii
 *__pycache*
 *.pkl
-dockfiles/*
+# dockfiles/*
 /config/config_pipeline.sh
 license.txt
+**/z_*/
+**crash-**

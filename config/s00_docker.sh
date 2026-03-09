@@ -6,8 +6,13 @@ docker pull "${NEURODOCKER_IMAGE}"
 # [2] Fmriprep 
 docker pull "${FPREP_IMAGE}"
 
+# [3] Afni
+docker pull $AFNI_IMAGE
 
+# [4] Nighres (for cbs tools)
+docker pull $NIGHRES_IMAGE
 
+# [5] fsl
 
 
 
