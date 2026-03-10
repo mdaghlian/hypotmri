@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # --- Default Values ---
-export PIPELINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 chmod +x "${PIPELINE_DIR}/config"
 chmod +x "${PIPELINE_DIR}/anatomical"
 chmod +x "${PIPELINE_DIR}/functional"

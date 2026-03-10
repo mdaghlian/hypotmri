@@ -22,7 +22,8 @@ Local:
 
 add the following to your .bash_profile 
 ```bash
-source "/path/to/this/folder/config/config_pipeline.sh"
+export PIPELINE_DIR="/path/to/this/repository"
+source "${PIPELINE_DIR}/config/config_pipeline.sh"
 ```
 Close and reopen terminal, this should be available then 
 
