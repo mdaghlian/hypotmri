@@ -1,4 +1,4 @@
-function sz0_spmbc(full_path_to_file, full_path_to_out)
+function s01_spmbc(full_path_to_file, full_path_to_out)
 disp(' ');
 disp('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++');
 disp([datestr(datetime('now')),'        Starting SPM Bias-correction']);

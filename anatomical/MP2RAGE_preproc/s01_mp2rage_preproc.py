@@ -2,15 +2,19 @@
 """
 run_mp2rage_preproc.py
 ======================
-Run the MP2RAGE preprocessing pipeline:
+Run the MP2RAGE preprocessing pipeline sequentially (no nipype).
 
-    Step 0  – SPM bias-field correction of the INV2 image
-    Step 1  – MPRAGEise the UNI image using the bias-corrected INV2
-    Step 1b – Nighres MP2RAGE skull stripping (masks T1w + T1map)
-    Step 2  – Nighres MGDM segmentation using skull-stripped inputs
-
-The MPRAGEised UNI and MGDM outputs feed directly into the FreeSurfer
-autorecon pipeline with no additional skull-strip.
+    Step 0   – SPM bias-field correction of the INV2 image
+    Step 1   – MPRAGEise the UNI image using the bias-corrected INV2
+    Step 1b  – Nighres skull stripping → brain mask only
+    Step 1c  – Apply brain mask to every image:
+                 · raw UNI              → UNI_brain         (→ MGDM)
+                 · MPRAGEised UNI       → UNI_mpragised_brain (→ FreeSurfer)
+                 · bias-corrected INV2  → INV2_brain        (→ QC)
+                 · T1map (optional)     → T1map_brain       (→ MGDM)
+    Step 2   – Nighres MGDM segmentation:
+                 · contrast_image1 = UNI_brain
+                 · contrast_image2 = T1map_brain (when available)
 
 Usage examples
 --------------
@@ -36,25 +40,28 @@ python run_mp2rage_preproc.py \\
     --mp2rage-script-dir /opt/mp2rage_scripts
 """
 
-import os
 import argparse
+import os
+import shutil
 from pathlib import Path
 
-import nipype.pipeline.engine as pe
-from nipype.interfaces import utility as niu
-from nipype.interfaces.io import DataSink
-
-from preproc_utils import SPMBiasCorrect, MPRAGEise, NighresSkullStrip, NighresMGDM
+from preproc_utils import (
+    spm_bias_correct,
+    mprage_ise,
+    nighres_skull_strip,
+    apply_mask,
+    nighres_mgdm,
+)
 
 
 # ---------------------------------------------------------------------------
 # Output filename helper
 # ---------------------------------------------------------------------------
 
-def build_output_name(outputdir: str, subject: str, session: str,
+def build_output_name(outdir: str, subject: str, session: str,
                       suffix: str, extension: str = '.nii.gz') -> str:
     """
-    Build a BIDS-style output filename from subject, session, and a suffix.
+    Build a BIDS-style output filename.
 
     Examples
     --------
@@ -63,180 +70,157 @@ def build_output_name(outputdir: str, subject: str, session: str,
     >>> build_output_name('/out', 'sub-01', None, 'T1w-mpragised')
     '/out/sub-01_T1w-mpragised.nii.gz'
     """
-    tokens = [subject]
-    if session:
-        tokens.append(session)
-    tokens.append(suffix)
-    return os.path.join(outputdir, '_'.join(tokens) + extension)
+    tokens = [t for t in [subject, session, suffix] if t]
+    return os.path.join(outdir, '_'.join(tokens) + extension)
 
 
 # ---------------------------------------------------------------------------
-# Pipeline builder
+# Pipeline
 # ---------------------------------------------------------------------------
 
-def build_pipeline(uni: str, inv2: str, outdir: str,
-                   subject: str, session: str, workdir: str,
-                   mp2rage_script_dir: str,
-                   t1map: str = None,
-                   spm_script: str = 's01_spmbc',
-                   spm_standalone: str = None,
-                   mcr_path: str = None,
-                   nighres_docker: str = 'nighres/nighres:latest',
-                   mgdm_contrast: str = 'Mp2rage7T',
-                   mgdm_atlas: str = None,
-                   ) -> pe.Workflow:
+def run_pipeline(
+    uni: str,
+    inv2: str,
+    outdir: str,
+    subject: str,
+    mp2rage_script_dir: str,
+    session: str = None,
+    workdir: str = '/tmp/mp2rage_work',
+    t1map: str = None,
+    spm_script: str = 's01_spmbc',
+    spm_standalone: str = None,
+    mcr_path: str = None,
+    nighres_docker: str = 'nighres/nighres:latest',
+    mgdm_contrast: str = 'Mp2rage7T',
+    mgdm_atlas: str = None,
+) -> dict:
     """
-    Construct and return the MP2RAGE preprocessing nipype workflow.
+    Run the full MP2RAGE preprocessing pipeline and copy outputs to *outdir*.
 
-    Parameters
-    ----------
-    uni                : Path to UNI image
-    inv2               : Path to INV2 image
-    outdir             : Directory for final outputs
-    subject            : BIDS subject label (e.g. 'sub-01')
-    session            : BIDS session label (e.g. 'ses-01'), or None
-    workdir            : Nipype working/cache directory
-    mp2rage_script_dir : Directory containing the SPM m-script
-    t1map              : Path to T1 map image (optional, recommended for 7T)
-    spm_script         : SPM m-script name (default: 's01_spmbc')
-    spm_standalone     : Path to SPM standalone executable (optional)
-    mcr_path           : Path to MATLAB MCR directory (optional)
-    nighres_docker     : Nighres Docker image tag
-    mgdm_contrast      : MGDM contrast type (default: Mp2rage7T)
-    mgdm_atlas         : MGDM atlas file (optional; uses nighres default when unset)
-
-    Returns
-    -------
-    wf : pe.Workflow
+    Returns a dict mapping output names to their final paths.
     """
     os.makedirs(outdir,  exist_ok=True)
     os.makedirs(workdir, exist_ok=True)
 
-    wf = pe.Workflow(name='mp2rage_preproc', base_dir=workdir)
-
-    # ------------------------------------------------------------------
-    # Input node
-    # ------------------------------------------------------------------
-    inputnode = pe.Node(
-        niu.IdentityInterface(fields=['uni', 'inv2', 't1map']),
-        name='inputnode',
-    )
-    inputnode.inputs.uni  = str(Path(uni).resolve())
-    inputnode.inputs.inv2 = str(Path(inv2).resolve())
-    if t1map:
-        inputnode.inputs.t1map = str(Path(t1map).resolve())
-
     # ------------------------------------------------------------------
     # Step 0 – SPM bias-field correction of INV2
     # ------------------------------------------------------------------
-    spm_kwargs = dict(
-        spm_script=spm_script,
+    print('\n[Step 0] SPM bias-field correction of INV2...')
+    inv2_bc = spm_bias_correct(
+        input_image=inv2,
+        out_dir=workdir,
         mp2rage_script_dir=mp2rage_script_dir,
+        spm_script=spm_script,
+        spm_standalone=spm_standalone,
+        mcr_path=mcr_path,
     )
-    if spm_standalone and mcr_path:
-        spm_kwargs['spm_standalone'] = spm_standalone
-        spm_kwargs['mcr_path']       = mcr_path
-
-    biascorrect = pe.Node(
-        SPMBiasCorrect(**spm_kwargs),
-        name='spm_biascorrect',
-    )
-    wf.connect(inputnode, 'inv2', biascorrect, 'input_image')
+    print('  -> {}'.format(inv2_bc))
 
     # ------------------------------------------------------------------
-    # Step 1 – MPRAGEise the UNI image using bias-corrected INV2
+    # Step 1 – MPRAGEise UNI with bias-corrected INV2
     # ------------------------------------------------------------------
-    mpragise = pe.Node(MPRAGEise(), name='mpragise')
-    wf.connect(inputnode,   'uni',          mpragise, 'uni_image')
-    wf.connect(biascorrect, 'output_image', mpragise, 'inv2_image')
+    print('\n[Step 1] MPRAGEising UNI...')
+    uni_mpragised = mprage_ise(
+        uni_file=uni,
+        inv2_file=inv2_bc,
+        out_dir=workdir,
+    )
+    print('  -> {}'.format(uni_mpragised))
 
     # ------------------------------------------------------------------
-    # Step 1b – Nighres skull stripping
-    #
-    # Uses bias-corrected INV2 as the mandatory second_inversion input.
-    # Passes MPRAGEised UNI as t1w so nighres returns a skull-stripped
-    # version ready for MGDM. T1map is also masked here if provided.
+    # Step 1b – Nighres skull stripping → brain mask only
     # ------------------------------------------------------------------
-    skullstrip = pe.Node(
-        NighresSkullStrip(docker_image=nighres_docker),
-        name='skullstrip',
+    print('\n[Step 1b] Nighres skull stripping...')
+    brain_mask = nighres_skull_strip(
+        inv2_image=inv2_bc,
+        uni_image=uni,
+        out_dir=workdir,
+        t1map_image=t1map,
+        docker_image=nighres_docker,
     )
-    wf.connect(biascorrect, 'output_image', skullstrip, 'inv2_image')
-    wf.connect(mpragise,    'output_image', skullstrip, 't1w_image')
-    wf.connect(inputnode,    'uni', skullstrip, 't1w_image')
+    print('  -> {}'.format(brain_mask))
+
+    # ------------------------------------------------------------------
+    # Step 1c – Apply brain mask to every image
+    # ------------------------------------------------------------------
+    print('\n[Step 1c] Applying brain mask...')
+
+    uni_brain = apply_mask(
+        input_image=uni,
+        mask_image=brain_mask,
+        out_dir=workdir,
+        out_suffix='_brain',
+    )
+    print('  UNI brain          -> {}'.format(uni_brain))
+
+    uni_mpragised_brain = apply_mask(
+        input_image=uni_mpragised,
+        mask_image=brain_mask,
+        out_dir=workdir,
+        out_suffix='_brain',
+    )
+    print('  UNI mpragised brain -> {}'.format(uni_mpragised_brain))
+
+    inv2_brain = apply_mask(
+        input_image=inv2_bc,
+        mask_image=brain_mask,
+        out_dir=workdir,
+        out_suffix='_brain',
+    )
+    print('  INV2 brain         -> {}'.format(inv2_brain))
+
+    t1map_brain = None
     if t1map:
-        wf.connect(inputnode, 't1map', skullstrip, 't1map_image')
+        t1map_brain = apply_mask(
+            input_image=t1map,
+            mask_image=brain_mask,
+            out_dir=workdir,
+            out_suffix='_brain',
+        )
+        print('  T1map brain        -> {}'.format(t1map_brain))
 
     # ------------------------------------------------------------------
     # Step 2 – Nighres MGDM segmentation
-    #
-    # Receives skull-stripped T1w (and T1map if available) from Step 1b.
-    # Using skull-stripped inputs is the workflow shown in the official
-    # nighres tissue classification example.
     # ------------------------------------------------------------------
-    mgdm_kwargs = dict(
+    print('\n[Step 2] Nighres MGDM segmentation...')
+    mgdm_outputs = nighres_mgdm(
+        input_image=uni_brain,
+        out_dir=workdir,
         docker_image=nighres_docker,
         contrast_type=mgdm_contrast,
+        t1map_image=t1map_brain,
+        atlas=mgdm_atlas,
     )
-    if mgdm_atlas:
-        mgdm_kwargs['atlas'] = mgdm_atlas
-
-    mgdm = pe.Node(NighresMGDM(**mgdm_kwargs), name='mgdm')
-
-    wf.connect(skullstrip, 't1w_masked', mgdm, 'input_image')
-    # wf.connect(inputnode, 'uni', mgdm, 'input_image')
-    if t1map:
-        wf.connect(skullstrip, 't1map_masked', mgdm, 't1map_image')
+    print('  segmentation -> {}'.format(mgdm_outputs['segmentation']))
 
     # ------------------------------------------------------------------
-    # Output node
+    # Copy outputs to outdir with BIDS-style names
     # ------------------------------------------------------------------
-    output_fields = [
-        'inv2_biascorrected',
-        'uni_mpragised',
-        'brain_mask',
-        'mgdm_segmentation',
-        'mgdm_distance',
-        'mgdm_labels',
-        'mgdm_memberships',
-    ]
-    outputnode = pe.Node(
-        niu.IdentityInterface(fields=output_fields),
-        name='outputnode',
-    )
-    wf.connect(biascorrect, 'output_image', outputnode, 'inv2_biascorrected')
-    wf.connect(mpragise,    'output_image', outputnode, 'uni_mpragised')
-    wf.connect(skullstrip,  'brain_mask',   outputnode, 'brain_mask')
-    wf.connect(mgdm,        'segmentation', outputnode, 'mgdm_segmentation')
-    wf.connect(mgdm,        'distance',     outputnode, 'mgdm_distance')
-    wf.connect(mgdm,        'labels',       outputnode, 'mgdm_labels')
-    wf.connect(mgdm,        'memberships',  outputnode, 'mgdm_memberships')
+    print('\n[Output] Copying results to {}...'.format(outdir))
 
-    # ------------------------------------------------------------------
-    # DataSink – copy final outputs to outdir with BIDS-style names
-    # ------------------------------------------------------------------
-    prefix = subject + ('_' + session if session else '')
+    def _copy(src, suffix):
+        dst = build_output_name(outdir, subject, session, suffix)
+        shutil.copy(src, dst)
+        print('  {} -> {}'.format(suffix, dst))
+        return dst
 
-    sink = pe.Node(DataSink(base_directory=outdir), name='datasink')
-    sink.inputs.substitutions = [
-        ('inv2_biascorrected', '{}_INV2-spmbc'.format(prefix)),
-        ('uni_mpragised',      '{}_UNI-mpragised'.format(prefix)),
-        ('brain_mask',         '{}_brain-mask'.format(prefix)),
-        ('mgdm_segmentation',  '{}_mgdm-seg'.format(prefix)),
-        ('mgdm_distance',      '{}_mgdm-dist'.format(prefix)),
-        ('mgdm_labels',        '{}_mgdm-lbls'.format(prefix)),
-        ('mgdm_memberships',   '{}_mgdm-mems'.format(prefix)),
-    ]
+    results = {
+        'inv2_biascorrected':    _copy(inv2_bc,              'INV2-spmbc'),
+        'inv2_brain':            _copy(inv2_brain,            'INV2-spmbc-brain'),
+        'uni_mpragised':         _copy(uni_mpragised,         'UNI-mpragised'),
+        'uni_mpragised_brain':   _copy(uni_mpragised_brain,   'UNI-mpragised-brain'),
+        'uni_brain':             _copy(uni_brain,             'UNI-brain'),
+        'brain_mask':            _copy(brain_mask,            'brain-mask'),
+        'mgdm_segmentation':     _copy(mgdm_outputs['segmentation'], 'mgdm-seg'),
+        'mgdm_distance':         _copy(mgdm_outputs['distance'],     'mgdm-dist'),
+        'mgdm_labels':           _copy(mgdm_outputs['labels'],       'mgdm-lbls'),
+        'mgdm_memberships':      _copy(mgdm_outputs['memberships'],  'mgdm-mems'),
+    }
+    if t1map_brain:
+        results['t1map_brain'] = _copy(t1map_brain, 'T1map-brain')
 
-    wf.connect(outputnode, 'inv2_biascorrected', sink, '@inv2_biascorrected')
-    wf.connect(outputnode, 'uni_mpragised',      sink, '@uni_mpragised')
-    wf.connect(outputnode, 'brain_mask',         sink, '@brain_mask')
-    wf.connect(outputnode, 'mgdm_segmentation',  sink, '@mgdm_segmentation')
-    wf.connect(outputnode, 'mgdm_distance',      sink, '@mgdm_distance')
-    wf.connect(outputnode, 'mgdm_labels',        sink, '@mgdm_labels')
-    wf.connect(outputnode, 'mgdm_memberships',   sink, '@mgdm_memberships')
-
-    return wf
+    print('\n[Done] All outputs written to {}'.format(outdir))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -245,20 +229,23 @@ def build_pipeline(uni: str, inv2: str, outdir: str,
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description='MP2RAGE → FreeSurfer preprocessing pipeline',
+        description='MP2RAGE preprocessing pipeline (no nipype)',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument('--uni',    required=True, help='UNI image (.nii/.nii.gz)')
     p.add_argument('--inv2',   required=True, help='INV2 image (.nii/.nii.gz)')
-    p.add_argument('--t1map',  default=None,  help='T1 map (.nii/.nii.gz) — strongly recommended for 7T')
+    p.add_argument('--t1map',  default=None,
+                   help='T1 map (.nii/.nii.gz) — strongly recommended for 7T')
     p.add_argument('--outdir', required=True, help='Output directory')
-    p.add_argument('--subject', required=True, help='BIDS subject label e.g. sub-01')
-    p.add_argument('--session', default=None,  help='BIDS session label e.g. ses-01')
+    p.add_argument('--subject', required=True,
+                   help='BIDS subject label e.g. sub-01')
+    p.add_argument('--session', default=None,
+                   help='BIDS session label e.g. ses-01')
     p.add_argument('--workdir', default='/tmp/mp2rage_work',
-                   help='Nipype cache directory')
+                   help='Working directory for intermediate files')
     p.add_argument('--mp2rage-script-dir', required=True,
                    help='Directory containing SPM m-script')
-    p.add_argument('--spm-script', default='sZ0_spmbc',
+    p.add_argument('--spm-script', default='s01_spmbc',
                    help='SPM m-script name')
     p.add_argument('--spm-standalone', default=None,
                    help='Path to SPM standalone executable')
@@ -275,8 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = _build_parser().parse_args()
-
-    wf = build_pipeline(
+    run_pipeline(
         uni=args.uni,
         inv2=args.inv2,
         outdir=args.outdir,
@@ -293,8 +279,8 @@ def main():
         mgdm_atlas=args.mgdm_atlas,
     )
 
-    wf.run()
-
 
 if __name__ == '__main__':
     main()
+    # next step
+    # recon-all -subjid sub-03mprageisenighresbmask -i sub-03_ses-1_UNI-mpragised-brain.nii.gz  -autorecon1 -noskullstrip -hires 
