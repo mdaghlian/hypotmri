@@ -1,5 +1,3 @@
-*.nii.gz
-*.nii
 *__pycache*
 *.pkl
 # dockfiles/*
@@ -7,3 +5,4 @@
 license.txt
 **/z_*/
 **crash-**
+**/.DS_Store
