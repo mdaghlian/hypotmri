@@ -4,47 +4,54 @@ run_mp2rage_preproc.py
 ======================
 Run the MP2RAGE preprocessing pipeline sequentially (no nipype).
 
-    Step 0   – SPM bias-field correction of the INV2 image
-    Step 1   – MPRAGEise the UNI image using the bias-corrected INV2
-    Step 1b  – Nighres skull stripping → brain mask only
-    Step 1c  – Apply brain mask to every image:
-                 · raw UNI              → UNI_brain           (→ MGDM)
-                 · MPRAGEised UNI       → UNI_mpragised_brain  (→ FreeSurfer)
-                 · bias-corrected INV2  → INV2_brain           (→ QC)
-                 · T1map (optional)     → T1map_brain          (→ MGDM)
-    Step 2   – Nighres MGDM segmentation:
-                 · contrast_image1 = UNI_brain
-                 · contrast_image2 = T1map_brain (when available)
-    Step 3   – Nighres dura estimation:
-                · second_inversion = bias-corrected INV2
-                · skullstrip_mask  = brain mask
+    Step 0   - SPM bias-field correction of the INV2 image
+    Step 1   - MPRAGEise the UNI image using the bias-corrected INV2
+    Step 1d  - Segmentation on MPRAGEised UNI (with skull):
+                 · CAT12  →  <prefix>_UNI-mpragised_cat12seg/
+                 · SPM    →  <prefix>_UNI-mpragised_spmseg/
+    Step 1e  - Warp atlas sagittal sinus mask → T1w space (FLIRT affine;
+               requires --atlas-sag-sinus)
+    Step 1b  - Nighres skull stripping → brain mask
+    Step 1c  - Apply brain mask:
+                 · raw UNI              → UNI-brain            (→ MGDM)
+                 · MPRAGEised UNI       → UNI-mpragised-brain   (→ FreeSurfer)
+                 · bias-corrected INV2  → INV2-spmbc-brain      (→ QC)
+                 · T1map (optional)     → T1map-brain           (→ MGDM)
+    Step 2   - Nighres MGDM segmentation
+    Step 3   - Nighres dura estimation
+    Step 4a  - Combine nighres + CAT12 brain masks with dura/MGDM-guided
+               erosion → brain-mask-combined.nii.gz
+    Step 4b  - Refine SSS mask: atlas prior × INV2 dark signal × dura proba
+               → SSS-mask-refined.nii.gz
+               [QC checkpoint 1: review SSS mask before carving brain mask]
+    Step 4c  - Subtract dilated SSS from combined mask
+               → brain-mask-final.nii.gz
+               [QC checkpoint 2: review final mask before FreeSurfer]
+    Step 4d  - Apply final brain mask to MPRAGEised UNI
+               → UNI-mpragised-brain-final.nii.gz  (FreeSurfer input)
 
 Overwrite behaviour
 -------------------
 Existence is checked against the final BIDS-named files in *outdir*.
-If an output already exists there and overwrite is False, the step is
-skipped and the existing file is copied back into *workdir* so that
-downstream steps can use it as normal.
-
-Pass overwrite flags to force specific steps to re-run:
-
-    # Re-run only MGDM and dura estimation
-    python run_mp2rage_preproc.py ... --overwrite mgdm dura
-
-    # Re-run everything
-    python run_mp2rage_preproc.py ... --overwrite-all
+If an output already exists and overwrite is False, the step is skipped
+and the file is copied back into *workdir* for downstream use.
 
 Valid step names for --overwrite:
-    spmbc       Step 0  – SPM bias-field correction
-    mpragise    Step 1  – MPRAGEise
-    skullstrip  Step 1b – Nighres skull stripping
-    applymask   Step 1c – Apply brain mask (all masked images together)
-    mgdm        Step 2  – Nighres MGDM segmentation
-    dura        Step 3  – Nighres dura estimation
+    spmbc        Step 0   - SPM bias-field correction
+    mpragise     Step 1   - MPRAGEise
+    cat12seg     Step 1d  - CAT12 segmentation
+    spmseg       Step 1d  - SPM segmentation
+    sagsinus     Step 1e  - Atlas sagittal sinus warp
+    skullstrip   Step 1b  - Nighres skull stripping
+    applymask    Step 1c  - Apply brain mask
+    mgdm         Step 2   - Nighres MGDM segmentation
+    dura         Step 3   - Nighres dura estimation
+    combinemasks Step 4a  - Combine nighres + CAT12 masks
+    refineSss    Step 4b  - Refine SSS mask
+    finalMask    Step 4c+4d - Subtract SSS + apply final mask
 
-Usage examples
---------------
-# SPM standalone mode
+Usage example
+-------------
 python run_mp2rage_preproc.py \\
     --uni         /data/sub-01/ses-01/anat/sub-01_ses-01_UNI.nii.gz \\
     --inv2        /data/sub-01/ses-01/anat/sub-01_ses-01_INV2.nii.gz \\
@@ -55,47 +62,59 @@ python run_mp2rage_preproc.py \\
     --workdir     /tmp/mp2rage_work \\
     --mp2rage-script-dir /opt/mp2rage_scripts \\
     --spm-standalone     /opt/spm12/run_spm12.sh \\
-    --mcr-path           /opt/mcr/v99
-
-# MATLAB mode (omit --spm-standalone and --mcr-path)
-python run_mp2rage_preproc.py \\
-    --uni         /data/sub-01/ses-01/anat/sub-01_ses-01_UNI.nii.gz \\
-    --inv2        /data/sub-01/ses-01/anat/sub-01_ses-01_INV2.nii.gz \\
-    --outdir      /out \\
-    --subject     sub-01 \\
-    --mp2rage-script-dir /opt/mp2rage_scripts
+    --mcr-path           /opt/mcr/v99 \\
+    --atlas-sag-sinus    /opt/fsl/data/standard/MNI152_T1_1mm_Dil3_sagsinus_mask.nii.gz \\
+    --skip-qc
 """
 
 import argparse
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from preproc_utils import (
     check_skip,
+    get_stem,
     spm_bias_correct,
     mprage_ise,
+    cat12_seg,
+    spm_seg,
+    warp_atlas_sag_sinus,
     nighres_skull_strip,
     apply_mask,
     nighres_mgdm,
     nighres_dura_estimation,
+    combine_brain_masks,
+    refine_sss_mask,
+    make_brain_mask_nosss,
+    launch_freeview,
 )
 
-# All valid step keys, in pipeline order
-STEP_KEYS = ['spmbc', 'mpragise', 'skullstrip', 'applymask', 'mgdm', 'dura']
+STEP_KEYS = [
+    'spmbc',
+    'mpragise',
+    'cat12seg',
+    'spmseg',
+    'sagsinus',
+    'skullstrip',
+    'applymask',
+    'mgdm',
+    'dura',
+    'combinemasks',
+    'refineSss',
+    'finalMask',
+]
 
 
 # ---------------------------------------------------------------------------
-# Output filename helper
+# Helpers
 # ---------------------------------------------------------------------------
 
-def build_output_name(outdir: str, subject: str, session: str,
-                      suffix: str, extension: str = '.nii.gz') -> str:
+def build_output_name(outdir, subject, session, suffix, extension='.nii.gz'):
     """
-    Build a BIDS-style output filename.
+    Build a BIDS-style output path.
 
-    Examples
-    --------
     >>> build_output_name('/out', 'sub-01', 'ses-01', 'T1w-mpragised')
     '/out/sub-01_ses-01_T1w-mpragised.nii.gz'
     >>> build_output_name('/out', 'sub-01', None, 'T1w-mpragised')
@@ -105,51 +124,92 @@ def build_output_name(outdir: str, subject: str, session: str,
     return os.path.join(outdir, '_'.join(tokens) + extension)
 
 
+def _qc_checkpoint(description, freeview_args, skip_qc):
+    """
+    Pause for manual review in freeview unless --skip-qc is set.
+    Prompts for Enter after viewing so any edits are read back before
+    the pipeline continues.
+    """
+    print('\n' + '=' * 62)
+    print('  [QC] {}'.format(description))
+    print('=' * 62)
+
+    if skip_qc:
+        print('  --skip-qc set: skipping manual review.')
+        return
+
+    launch_freeview(*freeview_args)
+
+    print('\n  Review the images in freeview.')
+    print('  If you edit the mask:')
+    print('    File → Save Volume As ... → overwrite the same file')
+    print('  Press Enter here when done (or Ctrl-C to abort pipeline).')
+    try:
+        input('  [waiting] Press Enter to continue > ')
+    except KeyboardInterrupt:
+        print('\nPipeline aborted by user.')
+        sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
-    uni: str,
-    inv2: str,
-    outdir: str,
-    subject: str,
-    mp2rage_script_dir: str,
-    session: str = None,
-    workdir: str = '/tmp/mp2rage_work',
-    t1map: str = None,
-    spm_script: str = 's01_spmbc',
-    spm_standalone: str = None,
-    mcr_path: str = None,
-    nighres_docker: str = 'nighres/nighres:latest',
-    mgdm_contrast: str = 'Mp2rage7T',
-    mgdm_atlas: str = None,
-    dura_background_distance: float = 5.0,
-    overwrite: dict = None,
-) -> dict:
+    uni,
+    inv2,
+    outdir,
+    subject,
+    mp2rage_script_dir,
+    session=None,
+    workdir='/tmp/mp2rage_work',
+    t1map=None,
+    spm_script='s01_spmbc',
+    spm_standalone=None,
+    mcr_path=None,
+    cat12_script='preproc_cat12seg',
+    spm_seg_script='preproc_spmseg',
+    atlas_sag_sinus=None,
+    fsl_dir=None,
+    nighres_docker='nighres/nighres:latest',
+    mgdm_contrast='Mp2rage7T',
+    mgdm_atlas=None,
+    dura_background_distance=5.0,
+    dura_threshold=0.7,
+    inv2_sss_percentile=15.0,
+    sss_dilation_mm=3.5,
+    skip_qc=False,
+    overwrite=None,
+):
     """
-    Run the full MP2RAGE preprocessing pipeline and copy outputs to *outdir*.
+    Run the full MP2RAGE preprocessing pipeline.
 
-    Existence checks are performed against final BIDS-named files in *outdir*.
-    Skipped steps have their outputs restored from *outdir* into *workdir* so
-    that all downstream steps can continue to read from *workdir* as normal.
+    Outputs are written to BIDS-named files in *outdir*. Intermediate files
+    live in *workdir*. Skipped steps restore their outputs from *outdir* into
+    *workdir* so downstream steps always read from a consistent location.
 
     Parameters
     ----------
-    overwrite : dict mapping step keys to booleans, e.g.
-                {'spmbc': False, 'mgdm': True}.
-                Missing keys default to False (don't overwrite).
-                Valid keys: 'spmbc', 'mpragise', 'skullstrip',
-                            'applymask', 'mgdm', 'dura'.
+    dura_threshold       : Dura probability threshold for mask erosion in
+                           Step 4a (default 0.7 — conservative).
+    inv2_sss_percentile  : INV2 percentile defining 'dark' signal in the SSS
+                           ROI for Step 4b (default 15.0).
+    sss_dilation_mm      : SSS mask dilation radius before subtraction from
+                           brain mask in Step 4c (default 3.5 mm).
+    skip_qc              : Skip manual freeview checkpoints (batch use).
+    overwrite            : Dict mapping step keys → bool. Missing keys default
+                           to False. Valid keys: see STEP_KEYS.
 
-    Returns a dict mapping output names to their final paths in outdir.
+    Returns
+    -------
+    dict mapping output labels to their final paths in outdir.
     """
     ow = {k: False for k in STEP_KEYS}
     if overwrite:
         unknown = set(overwrite) - set(STEP_KEYS)
         if unknown:
             raise ValueError(
-                'Unknown overwrite key(s): {}. Valid keys are: {}'.format(
+                'Unknown overwrite key(s): {}. Valid keys: {}'.format(
                     sorted(unknown), STEP_KEYS)
             )
         ow.update(overwrite)
@@ -160,16 +220,17 @@ def run_pipeline(
     workdir = str(Path(workdir).resolve())
     outdir  = str(Path(outdir).resolve())
 
-    # Convenience: build a final (outdir) path for a given suffix
-    def _final(suffix):
-        return build_output_name(outdir, subject, session, suffix)
+    prefix = '_'.join(t for t in [subject, session] if t)
 
-    # Convenience: workdir path with the same basename as a final path
+    def _final(suffix, ext='.nii.gz'):
+        return build_output_name(outdir, subject, session, suffix,
+                                 extension=ext)
+
     def _work(final_path):
         return os.path.join(workdir, os.path.basename(final_path))
 
     # ------------------------------------------------------------------
-    # Step 0 – SPM bias-field correction of INV2
+    # Step 0 - SPM bias-field correction of INV2
     # ------------------------------------------------------------------
     print('\n[Step 0] SPM bias-field correction of INV2...')
 
@@ -195,7 +256,7 @@ def run_pipeline(
     print('  -> {}'.format(inv2_bc_work))
 
     # ------------------------------------------------------------------
-    # Step 1 – MPRAGEise UNI with bias-corrected INV2
+    # Step 1 - MPRAGEise UNI with bias-corrected INV2
     # ------------------------------------------------------------------
     print('\n[Step 1] MPRAGEising UNI...')
 
@@ -218,7 +279,92 @@ def run_pipeline(
     print('  -> {}'.format(uni_mpragised_work))
 
     # ------------------------------------------------------------------
-    # Step 1b – Nighres skull stripping → brain mask only
+    # Step 1d - CAT12 segmentation (MPRAGEised UNI, with skull)
+    # ------------------------------------------------------------------
+    print('\n[Step 1d] CAT12 segmentation...')
+
+    uni_mpragised_stem    = get_stem(Path(uni_mpragised_final))
+    cat12_out_final       = os.path.join(outdir, '{}_UNI-mpragised_cat12seg'.format(prefix))
+    cat12_sentinel_final  = os.path.join(cat12_out_final, '{}_cat12seg_batch.mat'.format(uni_mpragised_stem))
+    cat12_brainmask_final = os.path.join(cat12_out_final, '{}_brainmask.nii'.format(uni_mpragised_stem))
+
+    if not check_skip(
+        {'cat12seg_batch': cat12_sentinel_final},
+        ow['cat12seg'],
+        'Step 1d: CAT12 segmentation',
+    ):
+        cat12_work_dir = cat12_seg(
+            input_image=uni_mpragised_work,
+            out_dir=workdir,
+            mp2rage_script_dir=mp2rage_script_dir,
+            spm_script=cat12_script,
+            spm_standalone=spm_standalone,
+            mcr_path=mcr_path,
+        )
+        if os.path.exists(cat12_out_final):
+            shutil.rmtree(cat12_out_final)
+        shutil.copytree(cat12_work_dir, cat12_out_final)
+
+    print('  -> {}'.format(cat12_out_final))
+
+    # ------------------------------------------------------------------
+    # Step 1d - SPM segmentation (MPRAGEised UNI, with skull)
+    # ------------------------------------------------------------------
+    print('\n[Step 1d] SPM segmentation...')
+
+    spm_out_final       = os.path.join(outdir, '{}_UNI-mpragised_spmseg'.format(prefix))
+    spm_sentinel_final  = os.path.join(spm_out_final, '{}_spmseg_batch.mat'.format(uni_mpragised_stem))
+    spm_brainmask_final = os.path.join(spm_out_final, '{}_brainmask.nii'.format(uni_mpragised_stem))
+
+    if not check_skip(
+        {'spmseg_batch': spm_sentinel_final},
+        ow['spmseg'],
+        'Step 1d: SPM segmentation',
+    ):
+        spm_work_dir = spm_seg(
+            input_image=uni_mpragised_work,
+            out_dir=workdir,
+            mp2rage_script_dir=mp2rage_script_dir,
+            spm_script=spm_seg_script,
+            spm_standalone=spm_standalone,
+            mcr_path=mcr_path,
+        )
+        if os.path.exists(spm_out_final):
+            shutil.rmtree(spm_out_final)
+        shutil.copytree(spm_work_dir, spm_out_final)
+
+    print('  -> {}'.format(spm_out_final))
+
+    # ------------------------------------------------------------------
+    # Step 1e - Warp atlas sagittal sinus mask → T1w space
+    # ------------------------------------------------------------------
+    print('\n[Step 1e] Warping atlas sagittal sinus mask to T1w space...')
+
+    sss_atlas_final = _final('SSS-atlas-in-T1')
+    sss_atlas_work  = _work(sss_atlas_final)
+
+    if atlas_sag_sinus:
+        if not check_skip(
+            {'sss_atlas': sss_atlas_final},
+            ow['sagsinus'],
+            'Step 1e: atlas sagittal sinus warp',
+            workdir_paths={'sss_atlas': sss_atlas_work},
+        ):
+            sss_atlas_work = warp_atlas_sag_sinus(
+                t1w_image=uni_mpragised_work,
+                atlas_mask=atlas_sag_sinus,
+                out_dir=workdir,
+                fsl_dir=fsl_dir,
+            )
+            shutil.copy(sss_atlas_work, sss_atlas_final)
+        print('  -> {}'.format(sss_atlas_work))
+    else:
+        print('  [skip] --atlas-sag-sinus not provided.')
+        sss_atlas_final = None
+        sss_atlas_work  = None
+
+    # ------------------------------------------------------------------
+    # Step 1b - Nighres skull stripping → brain mask
     # ------------------------------------------------------------------
     print('\n[Step 1b] Nighres skull stripping...')
 
@@ -243,7 +389,7 @@ def run_pipeline(
     print('  -> {}'.format(brain_mask_work))
 
     # ------------------------------------------------------------------
-    # Step 1c – Apply brain mask to every image
+    # Step 1c - Apply brain mask to every image
     # ------------------------------------------------------------------
     print('\n[Step 1c] Applying brain mask...')
 
@@ -252,10 +398,10 @@ def run_pipeline(
     inv2_brain_final          = _final('INV2-spmbc-brain')
     t1map_brain_final         = _final('T1map-brain') if t1map else None
 
-    outdir_applymask = {
-        'uni_brain':          uni_brain_final,
+    outdir_applymask  = {
+        'uni_brain':           uni_brain_final,
         'uni_mpragised_brain': uni_mpragised_brain_final,
-        'inv2_brain':         inv2_brain_final,
+        'inv2_brain':          inv2_brain_final,
     }
     workdir_applymask = {k: _work(v) for k, v in outdir_applymask.items()}
 
@@ -287,7 +433,6 @@ def run_pipeline(
             out_dir=workdir,
             out_suffix='_brain',
         )
-
         shutil.copy(uni_brain_work,           uni_brain_final)
         shutil.copy(uni_mpragised_brain_work, uni_mpragised_brain_final)
         shutil.copy(inv2_brain_work,          inv2_brain_final)
@@ -301,9 +446,7 @@ def run_pipeline(
                 out_suffix='_brain',
             )
             shutil.copy(t1map_brain_work, t1map_brain_final)
-
     else:
-        # Restored from outdir by check_skip; read back workdir paths
         uni_brain_work           = workdir_applymask['uni_brain']
         uni_mpragised_brain_work = workdir_applymask['uni_mpragised_brain']
         inv2_brain_work          = workdir_applymask['inv2_brain']
@@ -316,7 +459,7 @@ def run_pipeline(
         print('  T1map brain         -> {}'.format(t1map_brain_work))
 
     # ------------------------------------------------------------------
-    # Step 2 – Nighres MGDM segmentation
+    # Step 2 - Nighres MGDM segmentation
     # ------------------------------------------------------------------
     print('\n[Step 2] Nighres MGDM segmentation...')
 
@@ -356,7 +499,7 @@ def run_pipeline(
     print('  segmentation -> {}'.format(mgdm_work['segmentation']))
 
     # ------------------------------------------------------------------
-    # Step 3 – Nighres dura estimation
+    # Step 3 - Nighres dura estimation
     # ------------------------------------------------------------------
     print('\n[Step 3] Nighres dura estimation...')
 
@@ -381,22 +524,192 @@ def run_pipeline(
     print('  dura probability -> {}'.format(dura_work))
 
     # ------------------------------------------------------------------
-    # Return final outdir paths
+    # Step 4a - Combine nighres + CAT12 brain masks
+    # ------------------------------------------------------------------
+    print('\n[Step 4a] Combining brain masks...')
+
+    combined_mask_final = _final('brain-mask-combined')
+    combined_mask_work  = _work(combined_mask_final)
+
+    if not check_skip(
+        {'combined_mask': combined_mask_final},
+        ow['combinemasks'],
+        'Step 4a: combine brain masks',
+        workdir_paths={'combined_mask': combined_mask_work},
+    ):
+        if not Path(cat12_brainmask_final).exists():
+            raise FileNotFoundError(
+                'CAT12 brain mask not found: {}\n'
+                'Ensure Step 1d completed successfully.'.format(
+                    cat12_brainmask_final)
+            )
+        combined_mask_work = combine_brain_masks(
+            nighres_mask=brain_mask_work,
+            cat12_mask=cat12_brainmask_final,
+            dura_proba=dura_work,
+            mgdm_memberships=mgdm_work['memberships'],
+            out_dir=workdir,
+            dura_threshold=dura_threshold,
+        )
+        shutil.copy(combined_mask_work, combined_mask_final)
+
+    print('  -> {}'.format(combined_mask_work))
+
+    # ------------------------------------------------------------------
+    # Step 4b - Refine SSS mask (atlas × INV2 dark signal × dura proba)
+    # ------------------------------------------------------------------
+    print('\n[Step 4b] Refining SSS mask...')
+
+    sss_refined_final = _final('SSS-mask-refined')
+    sss_refined_work  = _work(sss_refined_final)
+
+    if sss_atlas_final and Path(sss_atlas_final).exists():
+        if not check_skip(
+            {'sss_refined': sss_refined_final},
+            ow['refineSss'],
+            'Step 4b: refine SSS mask',
+            workdir_paths={'sss_refined': sss_refined_work},
+        ):
+            sss_refined_work = refine_sss_mask(
+                atlas_sss_in_t1=sss_atlas_work,
+                inv2_image=inv2_bc_work,
+                dura_proba=dura_work,
+                brain_mask=combined_mask_work,
+                out_dir=workdir,
+                inv2_percentile=inv2_sss_percentile,
+            )
+            shutil.copy(sss_refined_work, sss_refined_final)
+
+        print('  -> {}'.format(sss_refined_work))
+
+        _qc_checkpoint(
+            description=(
+                'Review the refined SSS mask before it carves the brain mask.\n\n'
+                '  What to check:\n'
+                '    - Does the mask follow the superior sagittal sinus?\n'
+                '    - Under-filled → sinus remains in brain mask\n'
+                '    - Over-filled  → clips medial cortex\n\n'
+                '  Save edits in place. Pipeline reads back from:\n'
+                '    {}'.format(sss_refined_final)
+            ),
+            freeview_args=[
+                uni_mpragised_work,
+                '{}:colormap=lut:opacity=0.6'.format(sss_refined_final),
+                '{}:colormap=heat:opacity=0.4'.format(dura_work),
+            ],
+            skip_qc=skip_qc,
+        )
+        shutil.copy(sss_refined_final, sss_refined_work)
+
+    else:
+        print('  [skip] No atlas SSS mask available.')
+        sss_refined_final = None
+        sss_refined_work  = None
+
+    # ------------------------------------------------------------------
+    # Step 4c - Subtract dilated SSS → final brain mask
+    # ------------------------------------------------------------------
+    print('\n[Step 4c] Producing final brain mask...')
+
+    final_mask_final = _final('brain-mask-final')
+    final_mask_work  = _work(final_mask_final)
+
+    if not check_skip(
+        {'final_mask': final_mask_final},
+        ow['finalMask'],
+        'Step 4c: final brain mask',
+        workdir_paths={'final_mask': final_mask_work},
+    ):
+        if sss_refined_work and Path(sss_refined_work).exists():
+            final_mask_work = make_brain_mask_nosss(
+                brain_mask=combined_mask_work,
+                sss_mask=sss_refined_work,
+                out_dir=workdir,
+                sss_dilation_mm=sss_dilation_mm,
+            )
+        else:
+            print('  No SSS mask available; final mask = combined mask.')
+            final_mask_work = os.path.join(workdir, 'brain-mask-final.nii.gz')
+            shutil.copy(combined_mask_work, final_mask_work)
+
+        shutil.copy(final_mask_work, final_mask_final)
+
+    print('  -> {}'.format(final_mask_work))
+
+    _qc_checkpoint(
+        description=(
+            'Review the FINAL brain mask before FreeSurfer.\n\n'
+            '  What to check:\n'
+            '    - Inferior temporal poles and orbitofrontal cortex\n'
+            '    - SSS cavity (not too aggressive / not under-carved)\n'
+            '    - Cerebellum / brainstem inferior boundary\n'
+            '    - No stray islands outside the brain\n\n'
+            '  Use coronal + sagittal views. Save edits in place.\n'
+            '  Pipeline reads back from:\n'
+            '    {}'.format(final_mask_final)
+        ),
+        freeview_args=[
+            uni_mpragised_work,
+            '{}:colormap=lut:opacity=0.5'.format(final_mask_final),
+            '{}:colormap=lut:opacity=0.4'.format(combined_mask_final),
+            '{}:colormap=heat:opacity=0.3'.format(dura_work),
+        ],
+        skip_qc=skip_qc,
+    )
+    shutil.copy(final_mask_final, final_mask_work)
+
+    # ------------------------------------------------------------------
+    # Step 4d - Apply final brain mask to MPRAGEised UNI
+    # ------------------------------------------------------------------
+    print('\n[Step 4d] Applying final mask to MPRAGEised UNI...')
+
+    uni_mpragised_brain_fs_final = _final('UNI-mpragised-brain-final')
+    uni_mpragised_brain_fs_work  = _work(uni_mpragised_brain_fs_final)
+
+    if not check_skip(
+        {'uni_mpragised_brain_final': uni_mpragised_brain_fs_final},
+        ow['finalMask'],
+        'Step 4d: apply final brain mask',
+        workdir_paths={'uni_mpragised_brain_final': uni_mpragised_brain_fs_work},
+    ):
+        uni_mpragised_brain_fs_work = apply_mask(
+            input_image=uni_mpragised_work,
+            mask_image=final_mask_work,
+            out_dir=workdir,
+            out_suffix='_brain_final',
+        )
+        shutil.copy(uni_mpragised_brain_fs_work, uni_mpragised_brain_fs_final)
+
+    print('  FreeSurfer input -> {}'.format(uni_mpragised_brain_fs_work))
+
+    # ------------------------------------------------------------------
+    # Summary
     # ------------------------------------------------------------------
     print('\n[Done] All outputs in {}'.format(outdir))
+    print('  → FreeSurfer input : {}'.format(uni_mpragised_brain_fs_final))
+    print('  → Brain mask       : {}'.format(final_mask_final))
+    if sss_refined_final:
+        print('  → SSS mask         : {}'.format(sss_refined_final))
 
     results = {
-        'inv2_biascorrected':  inv2_bc_final,
-        'inv2_brain':          inv2_brain_final,
-        'uni_mpragised':       uni_mpragised_final,
-        'uni_mpragised_brain': uni_mpragised_brain_final,
-        'uni_brain':           uni_brain_final,
-        'brain_mask':          brain_mask_final,
-        'mgdm_segmentation':   mgdm_seg_final,
-        'mgdm_distance':       mgdm_dist_final,
-        'mgdm_labels':         mgdm_lbls_final,
-        'mgdm_memberships':    mgdm_mems_final,
-        'dura_probability':    dura_final,
+        'inv2_biascorrected':        inv2_bc_final,
+        'inv2_brain':                inv2_brain_final,
+        'uni_mpragised':             uni_mpragised_final,
+        'uni_mpragised_brain':       uni_mpragised_brain_final,
+        'uni_brain':                 uni_brain_final,
+        'brain_mask_nighres':        brain_mask_final,
+        'cat12_seg_dir':             cat12_out_final,
+        'spm_seg_dir':               spm_out_final,
+        'sss_atlas_in_t1':           sss_atlas_final,
+        'mgdm_segmentation':         mgdm_seg_final,
+        'mgdm_distance':             mgdm_dist_final,
+        'mgdm_labels':               mgdm_lbls_final,
+        'mgdm_memberships':          mgdm_mems_final,
+        'dura_probability':          dura_final,
+        'brain_mask_combined':       combined_mask_final,
+        'sss_mask_refined':          sss_refined_final,
+        'brain_mask_final':          final_mask_final,
+        'uni_mpragised_brain_final': uni_mpragised_brain_fs_final,
     }
     if t1map:
         results['t1map_brain'] = t1map_brain_final
@@ -405,10 +718,10 @@ def run_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point
+# CLI
 # ---------------------------------------------------------------------------
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser():
     p = argparse.ArgumentParser(
         description='MP2RAGE preprocessing pipeline (no nipype)',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -416,50 +729,60 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--uni',    required=True, help='UNI image (.nii/.nii.gz)')
     p.add_argument('--inv2',   required=True, help='INV2 image (.nii/.nii.gz)')
     p.add_argument('--t1map',  default=None,
-                   help='T1 map (.nii/.nii.gz) — strongly recommended for 7T')
-    p.add_argument('--outdir', required=True, help='Output directory')
-    p.add_argument('--subject', required=True,
-                   help='BIDS subject label e.g. sub-01')
-    p.add_argument('--session', default=None,
-                   help='BIDS session label e.g. ses-01')
+                   help='T1 map (.nii/.nii.gz) — recommended for 7T')
+    p.add_argument('--outdir',  required=True, help='Output directory')
+    p.add_argument('--subject', required=True, help='BIDS subject label, e.g. sub-01')
+    p.add_argument('--session', default=None,  help='BIDS session label, e.g. ses-01')
     p.add_argument('--workdir', default='/tmp/mp2rage_work',
                    help='Working directory for intermediate files')
     p.add_argument('--mp2rage-script-dir', required=True,
-                   help='Directory containing SPM m-script')
-    p.add_argument('--spm-script', default='s01_spmbc',
-                   help='SPM m-script name')
+                   help='Directory containing SPM/CAT12 m-scripts')
+    p.add_argument('--spm-script',     default='s01_spmbc',
+                   help='SPM bias correction m-script name')
+    p.add_argument('--cat12-script',   default='preproc_cat12seg',
+                   help='CAT12 segmentation m-script name')
+    p.add_argument('--spm-seg-script', default='preproc_spmseg',
+                   help='SPM segmentation m-script name')
     p.add_argument('--spm-standalone', default=None,
                    help='Path to SPM standalone executable')
     p.add_argument('--mcr-path', default=None,
-                   help='Path to MATLAB MCR (required if --spm-standalone set)')
+                   help='MATLAB MCR path (required with --spm-standalone)')
+    p.add_argument('--atlas-sag-sinus', default=None,
+                   help='Dilated atlas SSS mask in MNI space. '
+                        'If omitted, Steps 1e / 4b / 4c are skipped.')
+    p.add_argument('--fsl-dir', default=None,
+                   help='FSL root directory (default: $FSLDIR). '
+                        'Required for Step 1e.')
     p.add_argument('--nighres-docker', default='nighres/nighres:latest',
                    help='Nighres Docker image tag')
-    p.add_argument('--mgdm-contrast', default='Mp2rage7T',
+    p.add_argument('--mgdm-contrast',  default='Mp2rage7T',
                    help='MGDM contrast type')
-    p.add_argument('--mgdm-atlas', default=None,
+    p.add_argument('--mgdm-atlas',     default=None,
                    help='MGDM atlas file (uses nighres default if unset)')
     p.add_argument('--dura-background-distance', type=float, default=5.0,
                    help='Max distance within brain mask for dura estimation (mm)')
+    p.add_argument('--dura-threshold', type=float, default=0.7,
+                   help='Dura probability threshold for brain mask erosion (Step 4a)')
+    p.add_argument('--inv2-sss-percentile', type=float, default=15.0,
+                   help='INV2 percentile defining dark signal in SSS ROI (Step 4b)')
+    p.add_argument('--sss-dilation-mm', type=float, default=3.5,
+                   help='SSS mask dilation radius before subtraction (Step 4c, mm)')
+    p.add_argument('--skip-qc', action='store_true', default=False,
+                   help='Skip manual freeview QC checkpoints (batch use)')
 
-    ow_group = p.add_argument_group(
+    ow = p.add_argument_group(
         'overwrite options',
-        'By default, steps whose outputs already exist in outdir are skipped '
-        'and their files are restored to workdir for downstream use. '
-        'Use the flags below to force specific steps to re-run.\n'
+        'By default, steps whose outputs exist in outdir are skipped. '
         'Valid step names: ' + ', '.join(STEP_KEYS),
     )
-    ow_group.add_argument(
+    ow.add_argument(
         '--overwrite',
-        nargs='+',
-        metavar='STEP',
-        default=[],
-        choices=STEP_KEYS,
+        nargs='+', metavar='STEP', default=[], choices=STEP_KEYS,
         help='Force re-run for one or more named steps.',
     )
-    ow_group.add_argument(
+    ow.add_argument(
         '--overwrite-all',
-        action='store_true',
-        default=False,
+        action='store_true', default=False,
         help='Force re-run for all steps.',
     )
 
@@ -486,15 +809,21 @@ def main():
         spm_script=args.spm_script,
         spm_standalone=args.spm_standalone,
         mcr_path=args.mcr_path,
+        cat12_script=args.cat12_script,
+        spm_seg_script=args.spm_seg_script,
+        atlas_sag_sinus=args.atlas_sag_sinus,
+        fsl_dir=args.fsl_dir,
         nighres_docker=args.nighres_docker,
         mgdm_contrast=args.mgdm_contrast,
         mgdm_atlas=args.mgdm_atlas,
         dura_background_distance=args.dura_background_distance,
+        dura_threshold=args.dura_threshold,
+        inv2_sss_percentile=args.inv2_sss_percentile,
+        sss_dilation_mm=args.sss_dilation_mm,
+        skip_qc=args.skip_qc,
         overwrite=overwrite,
     )
 
 
 if __name__ == '__main__':
     main()
-    # next step
-    # recon-all -subjid sub-03mprageisenighresbmask -i sub-03_ses-1_UNI-mpragised-brain.nii.gz  -autorecon1 -noskullstrip -hires
