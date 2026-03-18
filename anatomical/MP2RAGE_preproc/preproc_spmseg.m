@@ -219,57 +219,91 @@ disp('++++ Generating brain mask from tissue probability maps...');
 gm_file  = fullfile(full_path_to_out, [in_file_prefix, '_GM_native.nii']);
 wm_file  = fullfile(full_path_to_out, [in_file_prefix, '_WM_native.nii']);
 csf_file = fullfile(full_path_to_out, [in_file_prefix, '_CSF_native.nii']);
+bone_file = fullfile(full_path_to_out, [in_file_prefix, '_bone_native.nii']);
+soft_file = fullfile(full_path_to_out, [in_file_prefix, '_softtissue_native.nii']);
+air_file  = fullfile(full_path_to_out, [in_file_prefix, '_air_native.nii']);
+
 
 if exist(gm_file, 'file') && exist(wm_file, 'file') && exist(csf_file, 'file')
     V_gm  = spm_vol(gm_file);
     V_wm  = spm_vol(wm_file);
     V_csf = spm_vol(csf_file);
+    V_bone = spm_vol(bone_file);
+    V_soft = spm_vol(soft_file);
+    V_air  = spm_vol(air_file);
 
     gm_vol  = spm_read_vols(V_gm);
     wm_vol  = spm_read_vols(V_wm);
     csf_vol = spm_read_vols(V_csf);
+    bone_vol = spm_read_vols(V_bone);
+    soft_vol = spm_read_vols(V_soft);
+    air_vol  = spm_read_vols(V_air);
 
-    % Sum tissue probabilities and threshold
-    combined = gm_vol + wm_vol + csf_vol;
-    mask     = combined >= 0.1;
+    se = strel('sphere', 8);
 
-    % Morphological closing to bridge sulcal gaps
-    se   = strel('sphere', 8);
-    mask = imclose(mask, se);
+    % ------------------------------------------------------------------ %
+    %  Mask 1: GM + WM + CSF >= 0.1  (original)
+    % ------------------------------------------------------------------ %
+    combined  = gm_vol + wm_vol + csf_vol;
+    mask_gmwmcsf = close_fill_lcc(combined >= 0.1, se);
 
-    % Fill holes slice-by-slice then 3-D
-    for z = 1:size(mask, 3)
-        mask(:,:,z) = imfill(mask(:,:,z), 'holes');
-    end
-    mask = imfill(mask, 'holes');
-
-    % Keep only largest connected component
-    CC       = bwconncomp(mask, 26);
-    num_vox  = cellfun(@numel, CC.PixelIdxList);
-    [~, idx] = max(num_vox);
-    mask     = false(size(mask));
-    mask(CC.PixelIdxList{idx}) = true;
-
-    % Write mask
     V_mask         = V_gm;
-    mask_path      = fullfile(full_path_to_out, [in_file_prefix, '_brainmask.nii']);
+    mask_path      = fullfile(full_path_to_out, [in_file_prefix, '_GMWMCSFbrainmask.nii']);
     V_mask.fname   = mask_path;
     V_mask.dt      = [spm_type('uint8'), 0];
     V_mask.descrip = 'Brain mask: GM+WM+CSF >= 0.1, closed + LCC';
     V_mask.pinfo   = [1; 0; 0];
-    spm_write_vol(V_mask, uint8(mask));
-    disp(['++++ Brain mask written: ', mask_path]);
+    spm_write_vol(V_mask, uint8(mask_gmwmcsf));
+    disp(['++++ Brain mask (GM+WM+CSF) written: ', mask_path]);
     disp(sprintf('     Brain voxels: %d  (%.1f cm^3)', ...
-        sum(mask(:)), ...
-        sum(mask(:)) * abs(det(V_gm.mat(1:3,1:3))) / 1000));
+        sum(mask_gmwmcsf(:)), ...
+        sum(mask_gmwmcsf(:)) * abs(det(V_gm.mat(1:3,1:3))) / 1000));
+
+    % ------------------------------------------------------------------ %
+    %  Mask 2: strip-mask logic  1 - (CSF+bone+soft+air > 0.5)
+    %          then same closing + fill + LCC
+    % ------------------------------------------------------------------ %
+    strip_raw        = 1 - ((csf_vol + bone_vol + soft_vol + air_vol) > 0.5);
+    mask_strip       = close_fill_lcc(strip_raw > 0, se);
+
+    V_mask2          = V_gm;
+    mask_strip_path  = fullfile(full_path_to_out, [in_file_prefix, '_stripbrainmask.nii']);
+    V_mask2.fname    = mask_strip_path;
+    V_mask2.dt       = [spm_type('uint8'), 0];
+    V_mask2.descrip  = 'Brain mask: strip logic (1-(CSF+bone+soft+air>0.5)), closed + LCC';
+    V_mask2.pinfo    = [1; 0; 0];
+    spm_write_vol(V_mask2, uint8(mask_strip));
+    disp(['++++ Brain mask (strip-based) written: ', mask_strip_path]);
+    disp(sprintf('     Brain voxels: %d  (%.1f cm^3)', ...
+        sum(mask_strip(:)), ...
+        sum(mask_strip(:)) * abs(det(V_gm.mat(1:3,1:3))) / 1000));
+
 else
     warning('s02_spmseg: Could not find one or more tissue maps — brain mask not created.');
     disp('     Expected: _GM_native.nii, _WM_native.nii, _CSF_native.nii');
 end
-
 %% Fin
 disp(' ');
 disp('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++');
 disp([datestr(datetime('now')),'        Completed SPM Segmentation']);
 disp('+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++');
 disp(' ');
+end
+
+
+
+% ------------------------------------------------------------------ %
+%  Local helper
+% ------------------------------------------------------------------ %
+function out_mask = close_fill_lcc(in_mask, se)
+    out_mask = imclose(in_mask, se);
+    for z = 1:size(out_mask, 3)
+        out_mask(:,:,z) = imfill(out_mask(:,:,z), 'holes');
+    end
+    out_mask = imfill(out_mask, 'holes');
+    CC       = bwconncomp(out_mask, 26);
+    num_vox  = cellfun(@numel, CC.PixelIdxList);
+    [~, idx] = max(num_vox);
+    out_mask = false(size(out_mask));
+    out_mask(CC.PixelIdxList{idx}) = true;
+end
