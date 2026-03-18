@@ -53,6 +53,8 @@ from preproc_utils import (
     read_pe_direction,
     check_skip,
     get_nvols,
+    _gunzip_to, 
+    _container_path,
 )
 
 STEP_KEYS = [
@@ -65,27 +67,6 @@ STEP_KEYS = [
 # unWarpEPIfloat.py -s argument: controls output dir name and dataset prefixes.
 # Keep as 'TS' to match the reference bash script behaviour.
 _UNWARP_SID = 'TS'
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _gunzip_to(src: str, dst: str) -> None:
-    """Decompress *src* (.nii.gz) to *dst* (.nii)."""
-    with open(dst, 'wb') as fh:
-        subprocess.run(['gunzip', '-c', src], stdout=fh, check=True)
-
-
-def _container_path(work_dir: str, filename: str, afni_docker: str) -> str:
-    """
-    Return the path to *filename* as seen from inside the execution context:
-    /data/<filename> for Docker, work_dir/<filename> for local.
-    Handles empty filename (returns mount root).
-    """
-    if afni_docker and afni_docker != 'local':
-        return '/data/{}'.format(filename).rstrip('/') if filename else '/data'
-    return os.path.join(work_dir, filename) if filename else work_dir
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +283,7 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 3] Running unWarpEPIfloat.py...')
 
-    unwarp_out = _out('{}_sdc-bold'.format(run_suffix))
+    unwarp_out = _out('{}_sdc_bold'.format(run_suffix))
 
     if not check_skip({'unwarp_out': unwarp_out}, ow['unwarp'],
                       'Step 3: unWarpEPIfloat'):
@@ -326,7 +307,7 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 4] Applying warp to SBREF...')
 
-    sdc_sbref = _out('{}_sdc-sbref'.format(run_suffix))
+    sdc_sbref = _out('{}_sdc_sbref'.format(run_suffix))
 
     warp_matches = glob.glob(os.path.join(
         safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID), '*_WARP.nii.gz'))
@@ -346,7 +327,7 @@ def process_run(
             shutil.copy(sbref_path, sdc_sbref)
 
     print('    -> {}'.format(sdc_sbref))
-
+    shutil.rmtree(work_dir)
     return {
         'sdc_bold':  unwarp_out,
         'sdc_sbref': sdc_sbref,

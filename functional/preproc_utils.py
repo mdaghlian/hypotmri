@@ -14,6 +14,37 @@ import re
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _stage(src: str, work_dir: str) -> str:
+    """
+    Copy *src* into *work_dir* if it is not already there.
+    Returns the host path of the copy (work_dir / basename(src)).
+    """
+    dst = os.path.join(work_dir, os.path.basename(src))
+    if str(Path(src).resolve()) != str(Path(dst).resolve()):
+        if Path(src).is_dir():
+            if Path(dst).exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy(src, dst)
+    return dst
+
+def _gunzip_to(src: str, dst: str) -> None:
+    """Decompress *src* (.nii.gz) to *dst* (.nii)."""
+    with open(dst, 'wb') as fh:
+        subprocess.run(['gunzip', '-c', src], stdout=fh, check=True)
+
+
+def _container_path(work_dir: str, filename: str, docker: str) -> str:
+    """
+    Return the path to *filename* as seen from inside the execution context:
+    /data/<filename> for Docker, work_dir/<filename> for local.
+    Handles empty filename (returns mount root).
+    """
+    if docker and docker != 'local':
+        return '/data/{}'.format(filename).rstrip('/') if filename else '/data'
+    return os.path.join(work_dir, filename) if filename else work_dir
+
 
 def make_safe_workdir(work_dir: str) -> str:
     """
@@ -25,7 +56,7 @@ def make_safe_workdir(work_dir: str) -> str:
         return work_dir
     safe = os.path.join(
         '/tmp',
-        'afni_' + hashlib.md5(work_dir.encode()).hexdigest()[:12]
+        'preproc_' + hashlib.md5(work_dir.encode()).hexdigest()[:12]
     )
     if not os.path.islink(safe):
         os.symlink(work_dir, safe)
@@ -244,7 +275,11 @@ def check_skip(
             dst = workdir_paths.get(key)
             if dst and src != dst:
                 os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
-                shutil.copy(src, dst)
+                if os.path.isdir(src):
+                    # if directory copy whole thing
+                    shutil.copytree(src,dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy(src, dst)
     return True
 
 
