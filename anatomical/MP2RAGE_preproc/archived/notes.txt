@@ -1,0 +1,2 @@
+Full processing pipelines options & methods for MP2RAGE
+- kept for completeness; they may be useful later
