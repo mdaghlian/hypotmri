@@ -3,7 +3,7 @@ set -e
 
 # --- Default Values ---
 SESSION="ses-01"
-FPREP_SES
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" &> /dev/null && pwd)
 
 # --- Usage Function ---
@@ -86,10 +86,11 @@ docker run --rm -it \
   -v $BIDS_DIR/derivatives/fmriprep:/out \
   -v $BIDS_DIR/../BIDSWF:/work \
   -v $SUBJECTS_DIR:/fsdir \
-  -v $BIDS_DIR/code/license.txt:/license.txt \
+  -v $PIPELINE_DIR/config/license.txt:/license.txt \
   $FPREP_IMAGE \
     /data /out participant \
     --participant-label $SUBJECT \
+    --skip_bids_validation \
     --fs-subjects-dir /fsdir \
     --fs-license-file /license.txt \
     --work-dir /work \
