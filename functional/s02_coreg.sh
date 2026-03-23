@@ -188,7 +188,7 @@ echo "  fs T1:  $FS_T1_NII"
 # ************************************************
 # (2) sbref_i to sbref_master 
 # Process each run
-BREF_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_sbref*.nii*" | sort))    
+BREF_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*sbref*.nii*" | sort))    
 run_counter=0
 for BREF_FILE in "${BREF_FILES[@]}"; do
     run_counter=$((run_counter + 1))
@@ -211,7 +211,8 @@ done
 # ************************************************
 # (3) MCFLIRT & concatenate
 # Find all the BOLD runs
-BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*_bold*.nii*" | sort))    
+echo $INPUT_DIR
+BOLD_FILES=($(find "${INPUT_DIR}" -name "${SUBJECT}_${SESSION}*bold*.nii*" | sort))    
 if [ ${#BOLD_FILES[@]} -eq 0 ]; then
     echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}"
     exit 1
@@ -239,7 +240,8 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
         WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}"
     fi
     mkdir -p "${WORK_DIR}"
-    
+    echo $BOLD_FILE
+    # exit 1
     # Extract base filenames
     BOLD_BASE=$(basename "${BOLD_FILE}" .nii.gz)
     BOLD_BASE=$(basename "${BOLD_BASE}" .nii)
@@ -335,9 +337,10 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
         # applyxfm4D "${BOLD_FILE}" "${FS_T1_NII}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
         
         # Use native resolution?
+        echo HEREEEEEEEEEEEE
+        echo applyxfm4D "${BOLD_FILE}" "${RES_REF_CORRECT_HD}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
         applyxfm4D "${BOLD_FILE}" "${RES_REF_CORRECT_HD}" "${BOLD_FS_OUT}" "${COMBINED_MATS_DIR}" -fourdigit -interp trilinear
-   
-         
+        
     fi
     echo "Single-step output:"
     echo "  ${BOLD_FS_OUT}"
