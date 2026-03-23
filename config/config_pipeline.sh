@@ -21,7 +21,7 @@ export FREESURFER_VERSION="7.3.2"
 export FSLICENSE="${PIPELINE_DIR}/config/license.txt"
 export FSL_VERSION="6.0.7.19"
 export AFNI_VERSION="AFNI_26.0.07"
-export PYPACKAGE_MANAGER="mamba"
+export PYPACKAGE_MANAGER="conda"
 
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then
     export NEURODOCKER_IMAGE="repronim/neurodocker:${NEURODOCKER_VERSION}"
