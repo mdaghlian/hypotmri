@@ -7,39 +7,41 @@ Run FreeSurfer recon-all stages for the MP2RAGE 7T pipeline.
 Stage ordering
 --------------
     Stage 3   – recon-all -autorecon1 -noskullstrip
-                  Conforms the input, runs Talairach registration.
-                  Skips FreeSurfer skull stripping (nighres mask is better).
+                  Conforms the full-head UNI input, runs Talairach registration.
+                  FreeSurfer's own skull stripping is skipped — the nighres
+                  mask injected in Stage 4a is superior for 7T MP2RAGE data.
+                  The full-head image is required here so that Talairach
+                  registration has correct head geometry to work from.
 
     Stage 4a  – Inject nighres brain mask → brainmask.mgz
-                  Merges nighres mask against brainmask.auto.mgz, multiplied
-                  by T1.mgz intensities.  Also writes brain.finalsurfs.manedit.mgz.
-                  Backups created before any file is overwritten.
+                  Resamples the nighres mask to T1.mgz space (nearest-neighbour),
+                  then computes:  brainmask = (nighres_mask > 0) * T1
+                  This zeros non-brain voxels while preserving T1 intensities —
+                  the format FreeSurfer expects.  Also writes
+                  brain.finalsurfs.manedit.mgz.  Backups created before any
+                  file is overwritten.
 
     QC #1     – Inspect brainmask.mgz before surface generation.
                   Pipeline pauses here (pass --skip-qc-1 to bypass).
 
     Stage 4b  – recon-all -autorecon2
-                  FreeSurfer computes its own wm.mgz, runs surface tessellation
-                  and places white + pial surfaces.
-
-    Stage 4c  – Inject MGDM WM mask → wm.mgz  (optional)
-                  Merges MGDM WM with FreeSurfer's existing wm.mgz using the
-                  formula: ((fs_wm + mgdm_wm) > 0) * 255, then takes the
-                  largest connected component to remove floating islands.
-                  Skipped if --mgdm-seg is not supplied.
+                  FreeSurfer computes wm.mgz, tessellates surfaces, and places
+                  white + pial surfaces.
 
     QC #2     – Inspect wm.mgz and white/pial surfaces.
                   Pipeline pauses here (pass --skip-qc-2 to bypass).
 
-    Stage 4d  – recon-all -autorecon2-wm
-                  Re-runs from the WM segmentation stage onwards to incorporate
-                  the injected WM mask.  Skipped if --mgdm-seg was not supplied.
+    Stage 4c  – recon-all -autorecon3
+                  Cortical parcellation, thickness, curvature stats, etc.
 
 Why this order?
 ---------------
-WM injection must happen *after* autorecon2 so that FreeSurfer's own wm.mgz
-exists to merge against.  Injecting before autorecon2 would write MGDM WM
-cold — FreeSurfer would then overwrite it during its own WM segmentation step.
+autorecon1 must receive a full-head image — Talairach registration relies on
+overall head shape and proportions to find the AC-PC line.  Passing a
+skull-stripped image can degrade or break this registration.  The nighres brain
+mask is injected immediately after autorecon1 so that autorecon2 uses our mask
+rather than FreeSurfer's skull-strip result.  autorecon3 then runs on the
+finished surfaces.
 
 Overwrite behaviour
 -------------------
@@ -58,41 +60,34 @@ Valid stage keys for --overwrite:
     autorecon1        Stage 3  – sentinel: mri/T1.mgz
     inject_brainmask  Stage 4a – sentinel: mri/brainmask.mgz
     autorecon2        Stage 4b – sentinel: mri/wm.mgz
-    inject_wm         Stage 4c – sentinel: mri/wm_mgdm.mgz
-    autorecon2_wm     Stage 4d – sentinel: surf/lh.white + surf/rh.white
-
-The existing --skip-autorecon1 / --skip-autorecon2 / --quit-point flags are
-preserved — they serve a different purpose (re-entry / debugging) and are
-evaluated after the overwrite check.
+    autorecon3        Stage 4c – sentinel: surf/lh.thickness
 
 Usage examples
 --------------
-# Minimal — brain mask only, no MGDM WM injection
+# Minimal run
 python run_freesurfer_recon.py \\
-    --uni-mpragised-brain /out/sub-01_ses-01_UNI-mpragised-brain.nii.gz \\
-    --brain-mask          /out/sub-01_ses-01_brain-mask.nii.gz \\
-    --subjects-dir        /out/freesurfer \\
-    --subject             sub-01_ses-01
+    --uni-mpragised    /out/sub-01_ses-01_UNI-mpragised.nii.gz \\
+    --brain-mask       /out/sub-01_ses-01_brain-mask.nii.gz \\
+    --subjects-dir     /out/freesurfer \\
+    --subject          sub-01_ses-01
 
-# Full — with manually edited brain mask and MGDM WM injection
+# With manually edited brain mask
 python run_freesurfer_recon.py \\
-    --uni-mpragised-brain /out/sub-01_ses-01_UNI-mpragised-brain.nii.gz \\
-    --brain-mask          /out/sub-01_ses-01_brain-mask.nii.gz \\
-    --brain-mask-edited   /out/sub-01_ses-01_brain-mask-edited.nii.gz \\
-    --mgdm-seg            /out/sub-01_ses-01_mgdm-seg.nii.gz \\
-    --subjects-dir        /out/freesurfer \\
-    --subject             sub-01_ses-01
+    --uni-mpragised    /out/sub-01_ses-01_UNI-mpragised.nii.gz \\
+    --brain-mask       /out/sub-01_ses-01_brain-mask.nii.gz \\
+    --brain-mask-edited /out/sub-01_ses-01_brain-mask-edited.nii.gz \\
+    --subjects-dir     /out/freesurfer \\
+    --subject          sub-01_ses-01
 
-# Re-entry after manual wm.mgz edits — skip to autorecon2-wm,
-# overwriting the inject_wm and autorecon2_wm stages
+# Re-entry after manual brainmask edits — re-inject and re-run from autorecon2
 python run_freesurfer_recon.py \\
-    --uni-mpragised-brain /out/sub-01_ses-01_UNI-mpragised-brain.nii.gz \\
-    --brain-mask          /out/sub-01_ses-01_brain-mask.nii.gz \\
-    --mgdm-seg            /out/sub-01_ses-01_mgdm-seg.nii.gz \\
-    --subjects-dir        /out/freesurfer \\
-    --subject             sub-01_ses-01 \\
-    --skip-autorecon1 --skip-autorecon2 --skip-qc-1 \\
-    --overwrite inject_wm autorecon2_wm
+    --uni-mpragised    /out/sub-01_ses-01_UNI-mpragised.nii.gz \\
+    --brain-mask       /out/sub-01_ses-01_brain-mask.nii.gz \\
+    --brain-mask-edited /out/sub-01_ses-01_brain-mask-edited.nii.gz \\
+    --subjects-dir     /out/freesurfer \\
+    --subject          sub-01_ses-01 \\
+    --skip-autorecon1 --skip-qc-1 \\
+    --overwrite inject_brainmask autorecon2 autorecon3
 """
 
 import argparse
@@ -101,7 +96,6 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from nilearn import image as nli
 
 from preproc_utils import (
     backup_file,
@@ -118,13 +112,8 @@ STAGE_KEYS = [
     'autorecon1',
     'inject_brainmask',
     'autorecon2',
-    'inject_wm',
-    'autorecon2_wm',
+    'autorecon3',
 ]
-
-# Label value used by nighres MGDM for cerebral white matter.
-# Adjust if your atlas uses a different convention.
-MGDM_WM_LABEL = 32
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +121,7 @@ MGDM_WM_LABEL = 32
 # ---------------------------------------------------------------------------
 
 def run_autorecon1(
-    uni_mpragised_brain: str,
+    uni_mpragised: str,
     subjects_dir: str,
     subject: str,
     extra_flags: list = None,
@@ -140,20 +129,21 @@ def run_autorecon1(
     """
     Run recon-all -autorecon1 -noskullstrip.
 
-    Uses the MPRAGEised skull-stripped UNI image.  FreeSurfer's own skull
-    stripping is deliberately skipped — the nighres mask injected in Stage 4a
-    is superior for 7T MP2RAGE data.
+    Uses the full-head MPRAGEised UNI image.  FreeSurfer's own skull stripping
+    is deliberately skipped — the nighres mask injected in Stage 4a is superior
+    for 7T MP2RAGE data.  The full-head image is required so that Talairach
+    registration has correct head geometry.
 
     Parameters
     ----------
-    uni_mpragised_brain : Skull-stripped MPRAGEised UNI (.nii.gz)
-    subjects_dir        : FreeSurfer SUBJECTS_DIR
-    subject             : FreeSurfer subject label
-    extra_flags         : Extra recon-all flags (e.g. ['-parallel'])
+    uni_mpragised : Full-head MPRAGEised UNI (.nii.gz)
+    subjects_dir  : FreeSurfer SUBJECTS_DIR
+    subject       : FreeSurfer subject label
+    extra_flags   : Extra recon-all flags (e.g. ['-parallel'])
     """
     cmd = [
         'recon-all',
-        '-i',            uni_mpragised_brain,
+        '-i',            uni_mpragised,
         '-s',            subject,
         '-sd',           subjects_dir,
         '-autorecon1',
@@ -181,11 +171,12 @@ def inject_brain_mask(
     1. Backup existing brainmask.mgz (if present).
     2. Resample the nighres mask (or edited override) to T1.mgz space using
        nearest-neighbour interpolation.
-    3. Compute:  new_brainmask = (nighres_mask > 0) * T1
-       This zeros out non-brain voxels while preserving T1 intensities inside
-       the mask — the format FreeSurfer expects.
-    4. Write brainmask.mgz and brain.finalsurfs.manedit.mgz (the latter is
-       checked by FreeSurfer during pial surface refinement).
+    3. Compute:  brainmask = (nighres_mask > 0) * T1
+       Zeros non-brain voxels while preserving T1 intensities inside the mask —
+       the format FreeSurfer expects.  The T1.mgz affine and header are
+       preserved so FreeSurfer sees a valid MGH volume.
+    4. Write brainmask.mgz and brain.finalsurfs.manedit.mgz (checked by
+       FreeSurfer during pial surface refinement).
     5. Save the resampled nighres mask as brainmask_nighres.mgz for audit.
 
     Parameters
@@ -203,6 +194,7 @@ def inject_brain_mask(
     t1_mgz         = mri_path / 'T1.mgz'
     brainmask_mgz  = mri_path / 'brainmask.mgz'
     finalsurfs_mgz = mri_path / 'brain.finalsurfs.manedit.mgz'
+    nighres_mgz    = mri_path / 'brainmask_nighres.mgz'
 
     if not t1_mgz.exists():
         raise FileNotFoundError(
@@ -216,19 +208,24 @@ def inject_brain_mask(
     mask_to_use = brain_mask_edited if brain_mask_edited else brain_mask
     print('\n[inject_brain_mask] Using mask: {}'.format(mask_to_use))
 
+    # Resample mask to T1.mgz space (nearest-neighbour) and save audit copy
     mask_mgh = resample_to_mgh(mask_to_use, t1_mgz)
-
-    nighres_mgz = mri_path / 'brainmask_nighres.mgz'
     mask_mgh.to_filename(str(nighres_mgz))
 
-    new_brainmask = nli.math_img(
-        '(nighres_mask > 0) * t1',
-        nighres_mask=str(nighres_mgz),
-        t1=str(t1_mgz),
+    # Load T1 to get data + geometry; load resampled mask for its data
+    t1_img   = nib.load(str(t1_mgz))
+    mask_img = nib.load(str(nighres_mgz))
+
+    brain_data = (
+        (mask_img.get_fdata() > 0).astype(np.float32)
+        * t1_img.get_fdata().astype(np.float32)
     )
+
+    # Wrap in T1's MGH header so FreeSurfer sees correct vox2ras / TR etc.
     new_brainmask_mgh = nib.freesurfer.MGHImage(
-        new_brainmask.get_fdata().astype(np.float32),
-        affine=new_brainmask.affine,
+        brain_data,
+        affine=t1_img.affine,
+        header=t1_img.header,
     )
 
     new_brainmask_mgh.to_filename(str(brainmask_mgz))
@@ -251,9 +248,8 @@ def run_autorecon2(
     """
     Run recon-all -autorecon2.
 
-    FreeSurfer computes its own WM segmentation (wm.mgz), tessellates the
-    surfaces, and places the white and pial surfaces.  The resulting wm.mgz
-    is then available for merging with the MGDM WM mask in Stage 4c.
+    FreeSurfer computes wm.mgz, tessellates the surfaces, and places the
+    white and pial surfaces.
 
     Parameters
     ----------
@@ -267,107 +263,23 @@ def run_autorecon2(
         '-sd',         subjects_dir,
         '-autorecon2',
     ] + (extra_flags or [])
-    print(cmd)
-    # run_cmd(cmd, tool_name='recon-all autorecon2', timeout=21600)
+    run_cmd(cmd, tool_name='recon-all autorecon2', timeout=21600)
 
 
 # ---------------------------------------------------------------------------
-# Stage 4c – inject MGDM WM mask (post-autorecon2)
+# Stage 4c – autorecon3
 # ---------------------------------------------------------------------------
 
-def inject_wm_mask(
-    mgdm_seg: str,
-    subjects_dir: str,
-    subject: str,
-    wm_label: int = MGDM_WM_LABEL,
-) -> Path:
-    """
-    Merge the MGDM WM mask with FreeSurfer's existing wm.mgz.
-
-    Must be called *after* autorecon2 so that wm.mgz exists to merge against.
-
-    Workflow
-    --------
-    1. Backup existing wm.mgz.
-    2. Extract WM voxels from MGDM segmentation (voxels == wm_label).
-    3. Resample MGDM WM mask to wm.mgz space (nearest-neighbour).
-    4. Merge:  new_wm = ((fs_wm + mgdm_wm) > 0) * 255
-    5. Take the largest connected component to remove floating WM islands.
-    6. Write the result as wm.mgz.  Save intermediate mgdm_wm.mgz for audit.
-
-    Parameters
-    ----------
-    mgdm_seg     : MGDM segmentation image (.nii.gz)
-    subjects_dir : FreeSurfer SUBJECTS_DIR
-    subject      : FreeSurfer subject label
-    wm_label     : Integer WM label in the MGDM segmentation
-
-    Returns
-    -------
-    Path to the written wm.mgz
-    """
-    mri_path = mri_dir(subjects_dir, subject)
-    wm_mgz   = mri_path / 'wm.mgz'
-
-    if not wm_mgz.exists():
-        raise FileNotFoundError(
-            'wm.mgz not found — has autorecon2 completed?\n'
-            '  Expected: {}'.format(wm_mgz)
-        )
-
-    backup_file(wm_mgz)
-
-    seg_img  = nib.load(str(Path(mgdm_seg).resolve()))
-    seg_data = np.round(seg_img.get_fdata()).astype(np.int32)
-    wm_mask  = (seg_data == wm_label).astype(np.float32)
-
-    if wm_mask.sum() == 0:
-        raise ValueError(
-            'No voxels with WM label {} found in MGDM segmentation.\n'
-            '  Check --mgdm-wm-label.  Segmentation: {}'.format(
-                wm_label, mgdm_seg)
-        )
-
-    mgdm_wm_nii = nib.Nifti1Image(wm_mask, seg_img.affine, seg_img.header)
-
-    mgdm_wm_mgh = resample_to_mgh(mgdm_wm_nii, wm_mgz)
-    mgdm_wm_mgz = mri_path / 'wm_mgdm.mgz'
-    mgdm_wm_mgh.to_filename(str(mgdm_wm_mgz))
-
-    merged = nli.math_img(
-        '((fs_wm + mgdm_wm) > 0) * 255',
-        fs_wm=str(wm_mgz),
-        mgdm_wm=str(mgdm_wm_mgz),
-    )
-
-    merged_lcc   = nli.largest_connected_component_img(merged)
-    merged_final = nli.math_img('img * 255', img=merged_lcc)
-
-    wm_mgh = nib.freesurfer.MGHImage(
-        merged_final.get_fdata().astype(np.float32),
-        affine=merged_final.affine,
-    )
-    wm_mgh.to_filename(str(wm_mgz))
-
-    print('[inject_wm_mask] Written: {}'.format(wm_mgz))
-    print('[inject_wm_mask] Written: {}'.format(mgdm_wm_mgz))
-    return wm_mgz
-
-
-# ---------------------------------------------------------------------------
-# Stage 4d – autorecon2-wm
-# ---------------------------------------------------------------------------
-
-def run_autorecon2_wm(
+def run_autorecon3(
     subjects_dir: str,
     subject: str,
     extra_flags: list = None,
 ) -> None:
     """
-    Run recon-all -autorecon2-wm.
+    Run recon-all -autorecon3.
 
-    Re-runs FreeSurfer from the WM segmentation stage onwards to incorporate
-    the injected wm.mgz from Stage 4c.
+    Cortical parcellation, thickness, curvature stats, and all remaining
+    FreeSurfer outputs.
 
     Parameters
     ----------
@@ -377,12 +289,11 @@ def run_autorecon2_wm(
     """
     cmd = [
         'recon-all',
-        '-s',             subject,
-        '-sd',            subjects_dir,
-        '-autorecon2-wm',
+        '-s',          subject,
+        '-sd',         subjects_dir,
+        '-autorecon3',
     ] + (extra_flags or [])
-
-    run_cmd(cmd, tool_name='recon-all autorecon2-wm', timeout=21600)
+    run_cmd(cmd, tool_name='recon-all autorecon3', timeout=14400)
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +338,7 @@ def qc_prompt_brainmask(
     print('  1. Edit the mask in freeview or ITK-SNAP')
     print('  2. Save as brain-mask-edited.nii.gz')
     print('  3. Re-run with: --brain-mask-edited <path> '
-          '--overwrite inject_brainmask autorecon2 inject_wm autorecon2_wm')
+          '--overwrite inject_brainmask autorecon2 autorecon3')
     print('=' * 70)
 
     launch_freeview(
@@ -445,7 +356,7 @@ def qc_prompt_surfaces(
     skip: bool = False,
 ) -> None:
     """
-    Pause the pipeline for surface + WM QC before autorecon2-wm.
+    Pause the pipeline for surface + WM QC before autorecon3.
 
     Parameters
     ----------
@@ -467,7 +378,7 @@ def qc_prompt_surfaces(
     rh_pial  = surf_dir / 'rh.pial'
 
     print('\n' + '=' * 70)
-    print('QC CHECKPOINT 2 — surfaces + WM mask (before autorecon2-wm)')
+    print('QC CHECKPOINT 2 — surfaces + WM mask (before autorecon3)')
     print('=' * 70)
     print('T1       : {}'.format(t1_mgz))
     print('WM mask  : {}'.format(wm_mgz))
@@ -484,15 +395,18 @@ def qc_prompt_surfaces(
               lh_white, lh_pial,
               rh_white, rh_pial))
     print()
-    print('If WM edits are needed:')
+    print('If surface edits are needed:')
     print('  1. Edit wm.mgz directly in freeview (Voxel Edit mode)')
-    print('  2. Save, then press Enter — autorecon2-wm will re-run.')
+    print('  2. Save, then press Enter — autorecon3 will proceed.')
+    print('     To re-run autorecon2 with your edits instead, Ctrl-C here')
+    print('     and re-run with: --skip-autorecon1 --skip-qc-1 '
+          '--overwrite autorecon2 autorecon3')
     print('=' * 70)
 
     launch_freeview(str(t1_mgz), str(wm_mgz))
 
     input('\nPress Enter when satisfied with surfaces and WM mask '
-          'to continue to autorecon2-wm ...')
+          'to continue to autorecon3 ...')
 
 
 # ---------------------------------------------------------------------------
@@ -500,15 +414,14 @@ def qc_prompt_surfaces(
 # ---------------------------------------------------------------------------
 
 def run_freesurfer_stages(
-    uni_mpragised_brain: str,
+    uni_mpragised: str,
     brain_mask: str,
     subjects_dir: str,
     subject: str,
     brain_mask_edited: str = None,
-    mgdm_seg: str = None,
-    mgdm_wm_label: int = MGDM_WM_LABEL,
     skip_autorecon1: bool = False,
     skip_autorecon2: bool = False,
+    skip_autorecon3: bool = False,
     skip_qc_1: bool = False,
     skip_qc_2: bool = False,
     extra_flags: list = None,
@@ -517,33 +430,30 @@ def run_freesurfer_stages(
 ) -> dict:
     """
     Full pipeline:
-        autorecon1 → brainmask inject → QC1 → autorecon2
-        → WM inject → QC2 → autorecon2-wm
+        autorecon1 → inject_brainmask → QC1 → autorecon2 → QC2 → autorecon3
 
     Existence of each stage's sentinel output is checked in the FreeSurfer
     subject directory.  Completed stages are skipped unless overwrite is set.
 
     Parameters
     ----------
-    uni_mpragised_brain : Skull-stripped MPRAGEised UNI (.nii.gz)
-    brain_mask          : nighres brain mask (.nii.gz)
-    subjects_dir        : FreeSurfer SUBJECTS_DIR
-    subject             : FreeSurfer subject label
-    brain_mask_edited   : Manually edited brain mask (overrides brain_mask)
-    mgdm_seg            : MGDM segmentation for WM injection (optional)
-    mgdm_wm_label       : WM label integer in the MGDM segmentation
-    skip_autorecon1     : Skip autorecon1 regardless of overwrite setting
-                          (legacy re-entry flag — takes precedence)
-    skip_autorecon2     : Skip autorecon2 regardless of overwrite setting
-                          (legacy re-entry flag — takes precedence)
-    skip_qc_1           : Do not pause at brainmask QC checkpoint
-    skip_qc_2           : Do not pause at surface/WM QC checkpoint
-    extra_flags         : Extra flags forwarded to all recon-all calls
-    quit_point          : Stop after a named stage ('autorecon1', 'brainmask')
-    overwrite           : dict mapping stage keys to booleans.
-                          Missing keys default to False (don't overwrite).
-                          Valid keys: 'autorecon1', 'inject_brainmask',
-                          'autorecon2', 'inject_wm', 'autorecon2_wm'.
+    uni_mpragised     : Full-head MPRAGEised UNI (.nii.gz)
+    brain_mask        : nighres brain mask (.nii.gz)
+    subjects_dir      : FreeSurfer SUBJECTS_DIR
+    subject           : FreeSurfer subject label
+    brain_mask_edited : Manually edited brain mask — overrides brain_mask
+                        at the injection step if supplied
+    skip_autorecon1   : Force-skip autorecon1 (legacy re-entry flag)
+    skip_autorecon2   : Force-skip autorecon2 (legacy re-entry flag)
+    skip_autorecon3   : Force-skip autorecon3 (legacy re-entry flag)
+    skip_qc_1         : Do not pause at brain mask QC checkpoint
+    skip_qc_2         : Do not pause at surface/WM QC checkpoint
+    extra_flags       : Extra flags forwarded to all recon-all calls
+    quit_point        : Stop after a named stage ('autorecon1', 'brainmask')
+    overwrite         : dict mapping stage keys → bool.
+                        Missing keys default to False.
+                        Valid keys: 'autorecon1', 'inject_brainmask',
+                        'autorecon2', 'autorecon3'.
 
     Returns
     -------
@@ -579,7 +489,7 @@ def run_freesurfer_stages(
         pass
     else:
         run_autorecon1(
-            uni_mpragised_brain=uni_mpragised_brain,
+            uni_mpragised=uni_mpragised,
             subjects_dir=subjects_dir,
             subject=subject,
             extra_flags=extra_flags,
@@ -643,59 +553,33 @@ def run_freesurfer_stages(
         print('[Stage 4b] autorecon2 complete.')
 
     # ------------------------------------------------------------------ #
-    # Stage 4c – inject MGDM WM mask                                     #
+    # QC checkpoint 2 — surfaces + WM                                    #
     # ------------------------------------------------------------------ #
-    wm_mgz = mri_path / 'wm.mgz'
-    if mgdm_seg:
-        print('\n[Stage 4c] Merging MGDM WM mask into wm.mgz ...')
-        if check_skip(
-            {'wm_mgdm': mri_path / 'wm_mgdm.mgz'},
-            ow['inject_wm'],
-            'Stage 4c: inject WM mask',
-        ):
-            wm_mgz = mri_path / 'wm.mgz'
-        else:
-            wm_mgz = inject_wm_mask(
-                mgdm_seg=mgdm_seg,
-                subjects_dir=subjects_dir,
-                subject=subject,
-                wm_label=mgdm_wm_label,
-            )
-            print('[Stage 4c] WM mask injected: {}'.format(wm_mgz))
+    qc_prompt_surfaces(
+        subjects_dir=subjects_dir,
+        subject=subject,
+        skip=skip_qc_2,
+    )
 
-        # -------------------------------------------------------------- #
-        # QC checkpoint 2 — surfaces + WM                                #
-        # -------------------------------------------------------------- #
-        qc_prompt_surfaces(
+    # ------------------------------------------------------------------ #
+    # Stage 4c – autorecon3                                               #
+    # ------------------------------------------------------------------ #
+    print('\n[Stage 4c] autorecon3 ...')
+    if skip_autorecon3:
+        print('  [skip] autorecon3 — --skip-autorecon3 flag set.')
+    elif check_skip(
+        {'lh_thickness': surf_dir / 'lh.thickness'},
+        ow['autorecon3'],
+        'Stage 4c: autorecon3',
+    ):
+        pass
+    else:
+        run_autorecon3(
             subjects_dir=subjects_dir,
             subject=subject,
-            skip=skip_qc_2,
+            extra_flags=extra_flags,
         )
-
-        # -------------------------------------------------------------- #
-        # Stage 4d – autorecon2-wm                                       #
-        # -------------------------------------------------------------- #
-        print('\n[Stage 4d] autorecon2-wm ...')
-        print(surf_dir / 'lh.white')
-        if check_skip(
-            {'lh_white_preaparc': surf_dir / 'lh.white.preaparc',
-             'rh_white_preaparc': surf_dir / 'rh.white.preaparc'},
-            ow['autorecon2_wm'],
-            'Stage 4d: autorecon2-wm',
-        ):
-            pass
-        else:
-            bloop
-            run_autorecon2_wm(
-                subjects_dir=subjects_dir,
-                subject=subject,
-                extra_flags=extra_flags,
-            )
-            print('[Stage 4d] autorecon2-wm complete.')
-
-    else:
-        print('\n[Stage 4c] No --mgdm-seg supplied — '
-              'skipping WM injection and autorecon2-wm.')
+        print('[Stage 4c] autorecon3 complete.')
 
     # ------------------------------------------------------------------ #
     # Collect outputs                                                     #
@@ -703,11 +587,13 @@ def run_freesurfer_stages(
     results = {
         'subject_dir':   str(subj_dir),
         'brainmask_mgz': str(brainmask_mgz),
-        'wm_mgz':        str(wm_mgz),
-        # 'lh_white':      str(surf_dir / 'lh.white'),
-        # 'rh_white':      str(surf_dir / 'rh.white'),
-        # 'lh_pial':       str(surf_dir / 'lh.pial'),
-        # 'rh_pial':       str(surf_dir / 'rh.pial'),
+        'wm_mgz':        str(mri_path / 'wm.mgz'),
+        'lh_white':      str(surf_dir / 'lh.white'),
+        'rh_white':      str(surf_dir / 'rh.white'),
+        'lh_pial':       str(surf_dir / 'lh.pial'),
+        'rh_pial':       str(surf_dir / 'rh.pial'),
+        'lh_thickness':  str(surf_dir / 'lh.thickness'),
+        'rh_thickness':  str(surf_dir / 'rh.thickness'),
     }
 
     print('\n[Done] Key outputs:')
@@ -724,13 +610,13 @@ def run_freesurfer_stages(
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description='FreeSurfer recon stages for MP2RAGE 7T: '
-                    'autorecon1 → brainmask inject → autorecon2 '
-                    '→ WM inject → autorecon2-wm.',
+                    'autorecon1 → brainmask inject → autorecon2 → autorecon3.',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    p.add_argument('--uni-mpragised-brain', required=True,
-                   help='Skull-stripped MPRAGEised UNI (.nii.gz)')
+    p.add_argument('--uni-mpragised', required=True,
+                   help='Full-head MPRAGEised UNI (.nii.gz) — '
+                        'brain mask is injected after autorecon1')
     p.add_argument('--brain-mask', required=True,
                    help='nighres brain mask (.nii.gz)')
     p.add_argument('--subjects-dir', required=True,
@@ -741,16 +627,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--brain-mask-edited', default=None,
                    help='Manually edited brain mask (.nii.gz) — '
                         'overrides --brain-mask at injection step')
-    p.add_argument('--mgdm-seg', default=None,
-                   help='MGDM segmentation (.nii.gz) for WM injection; '
-                        'if omitted, stages 4c and 4d are skipped')
-    p.add_argument('--mgdm-wm-label', type=int, default=MGDM_WM_LABEL,
-                   help='WM label integer in the MGDM segmentation')
 
     p.add_argument('--skip-autorecon1', action='store_true',
                    help='Force-skip autorecon1 regardless of overwrite setting')
     p.add_argument('--skip-autorecon2', action='store_true',
                    help='Force-skip autorecon2 regardless of overwrite setting')
+    p.add_argument('--skip-autorecon3', action='store_true',
+                   help='Force-skip autorecon3 regardless of overwrite setting')
     p.add_argument('--quit-point', default='',
                    help='Stop pipeline after named stage '
                         '(autorecon1 | brainmask)')
@@ -796,18 +679,18 @@ def main():
         overwrite = {k: (k in args.overwrite) for k in STAGE_KEYS}
 
     run_freesurfer_stages(
-        uni_mpragised_brain=args.uni_mpragised_brain,
+        uni_mpragised=args.uni_mpragised,
         brain_mask=args.brain_mask,
         subjects_dir=args.subjects_dir,
         subject=args.subject,
         brain_mask_edited=args.brain_mask_edited,
-        mgdm_seg=args.mgdm_seg,
-        mgdm_wm_label=args.mgdm_wm_label,
         skip_autorecon1=args.skip_autorecon1,
         skip_autorecon2=args.skip_autorecon2,
+        skip_autorecon3=args.skip_autorecon3,
         skip_qc_1=args.skip_qc_1,
         skip_qc_2=args.skip_qc_2,
         extra_flags=args.extra_flags,
+        quit_point=args.quit_point,
         overwrite=overwrite,
     )
 

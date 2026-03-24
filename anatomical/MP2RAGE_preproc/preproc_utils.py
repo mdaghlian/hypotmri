@@ -630,7 +630,7 @@ def spm_seg(
     else:
         cmd = ['matlab', '-nodisplay', '-nosplash', '-nodesktop',
                '-batch', matlab_expr]
-    print(cmd)
+    print(' '.join(cmd))
     result = subprocess.run(
         cmd,
         shell=False,

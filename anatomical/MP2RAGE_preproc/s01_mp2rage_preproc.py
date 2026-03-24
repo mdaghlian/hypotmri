@@ -57,8 +57,6 @@ from preproc_utils import (
     spm_bias_correct,
     mprage_ise,
     spm_seg,
-    apply_mask,
-    launch_freeview,
     get_stem
 )
 
@@ -67,7 +65,6 @@ STEP_KEYS = [
     'spmbc',
     'mpragise',
     'spmseg',
-    'applymask',
 ]
 
 
@@ -210,7 +207,6 @@ def run_pipeline(
     spm_seg_gm_final = os.path.join(
         spm_seg_out_final,
         '{}_GM_native.nii'.format(_t_stem))
-
     if not check_skip(
         {'spm_seg_gm': spm_seg_gm_final},
         ow['spmseg'],
@@ -230,7 +226,12 @@ def run_pipeline(
 
     print('  -> {}'.format(spm_seg_out_final))
 
-
+    # Copy brainmask to parent folder
+    brainmask_src = os.path.join(spm_seg_out_final, '{}_stripbrainmask.nii'.format(_t_stem))
+    brainmask_dst = os.path.join(outdir, f'{subject}_{session}_brainmask.nii')
+    print(brainmask_src)
+    if os.path.exists(brainmask_src):
+        shutil.copy(brainmask_src, brainmask_dst)
 
 # ---------------------------------------------------------------------------
 # CLI entry point
