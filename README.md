@@ -11,80 +11,12 @@ TODO:
 [] Containerisation 
 
 
-## setup
-Requirements: 
-Local:
-
-- docker (TODO singularity as well)
-- mamba/conda
-- freeview + freesurfer
-- fsl (optional)
-
-add the following to your .bash_profile 
-```bash
-export PIPELINE_DIR="/path/to/this/repository"
-source "${PIPELINE_DIR}/config/config_pipeline.sh"
-```
-Close and reopen terminal, this should be available then 
-
-### Downloads & Installation 
-*will create option to work with singularity too*
-
-Installing all the many, many, packages for neuroimaging analyses is a pain. Keeping it consistent, and reusable is even more of a pain. Fortunately we can use a couple of programs to manage the many packages and make installing a little easier
-
-[1] mamba/conda (required)
-This manages python environments. Basically, it allows you to create install a different python for each project. This is useful because different python programs have different requirements which often get in the way and cause havoc. Mamba is a speedy way to control this. You can also use conda, which will do the same things, but is a little slower. For installation instructions for mamba go to:
-- https://github.com/conda-forge/miniforge?tab=readme-ov-file#install 
-** If you want to use conda rather than mamba set PYPACKAGE_MANAGER=conda inside your config_pipeline.sh file **
-
-
-[2] Docker (required)
-Docker allows you to make entire virtual machines, like a mini-version of a computer. You can create specific recipes for that machine, which contain all the software you need. Again this avoids trouble with different hardware, allows you to control versions etc. Follow these instructions to install docker:
-- https://docs.docker.com/desktop/setup/install/mac-install/
-
-[3] freesurfer+freeview (required)
-The pipeline relies on freesurfer for segmentation; which needs to be checked by eye manually. This means it does need to be installed locally, as we need to be able to check surfaces & make edits with the gui. Check the freesurfer version in the config_pipeline.sh file. Currently we are working with 7.3.2. Select the correct version for your system (mac, linux, windows etc)
-- https://surfer.nmr.mgh.harvard.edu/pub/dist/freesurfer/7.3.2/
-Then follow the instructions here
-- https://surfer.nmr.mgh.harvard.edu/fswiki/DownloadAndInstall
-You will need to obtain a license key for your email
-- https://surfer.nmr.mgh.harvard.edu/registration.html
-Save this license file, inside the folder config, in this repository
-- /where/you/cloned/this/repo/config/license.txt
-
-[4] MRI viewer (optional)
-It is also important to have a way to view the images, to check registration, motion, artefacts etc. Everyone will have there own preference. A standard one is to use **fsleyes**. If you don't have it installed already it can be installed with mamba. 
-```bash
-# We create a new environment with mamba, and install fsleyes to 
-mamba create -n fslmamba -c conda-forge -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ fsl-base fsleyes
-# 2. Activate the environment
-conda activate fslmamba
-# 3. Try opening fsleyes
-fsleyes
-```
-I quite like itksnap; but anything you are used is good. 
-
-[5] VS code(optional - highly recommended):
-Vscode - use this to edit all of your programming files etc. It is also useful for running notebooks for code. It also can be used to install helpful plugins, like niivue. You could use another IDE if you are used to working in a specific environment. 
-- https://code.visualstudio.com/download 
-- TODO: add examples of notebooks
-
-[6] Everything else...
-Once you have this installed you are ready to go. All the other installation steps will be (hopefully!) handelled along the way by either *mamba* or *docker*. Remember for docker commands to work they need to be running  
-
-#### Automatic install of other requirements
-Once the above has been installed we then run some stuff to get everything started: 
-
-Assuming you have added  ```source "/path/to/this/folder/config/config_pipeline.sh"``` to your bash profile
-
-Open a new terminal 
-```bash
-cd "${PIPELINE_DIR}/config"
-# Install python environments
-bash s00_python_environments.sh
-# Install the docker images 
-bash s00_docker.sh
-```
+## setup - see config/local_setup.md
+In brief: 
+- Install requires a python package manager of your choice (mamba/conda) & docker (or singularity)
+- Scripts in /config manage most of the software installation
+- Other (soft) requirements are freesurfer - though you maybe able to also run this with a container
+- I also suggest having your favourite MRI viewer (e.g., fsleyes) available, as well as an IDE for editing code + notebooks (e.g., vscode) 
 
 
 ### [2] BIDS(ish)ification - TODO
@@ -103,6 +35,11 @@ bash s00_docker.sh
 ### [3] Autoflatten (*may remove from final pipeline*)
 - Input: Subject freesurfer folder
 - Output: flattened cortical files
+
+### [4] Pycortex (*may remove from final pipeline*)
+- Input: Subject freesurfer folder
+- Output: pycortex folder with flat maps & automatically drawn b14 ROIs
+
 
 # ---- REST NOT FULLY IMPLEMENTED ----
 
