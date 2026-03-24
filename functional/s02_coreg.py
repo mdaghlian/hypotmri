@@ -36,6 +36,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
+
 from preproc_utils import (
     build_output_name,
     check_skip,
@@ -45,7 +48,9 @@ from preproc_utils import (
     fsl_val,
     make_safe_workdir,
     _stage,
-    _container_path
+    _container_path,
+    _strip_extensions,
+    _bold_base
 )
 
 # ---------------------------------------------------------------------------
@@ -63,40 +68,11 @@ STEP_KEYS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _strip_extensions(p: Path) -> Path:
-    """Strip .nii and/or .gz suffixes from a Path."""
-    while p.suffix in ('.gz', '.nii'):
-        p = p.with_suffix('')
-    return p
-
-
-def _bold_base(bold_file: str, subject: str, session: str) -> str:
-    """
-    Return the BIDS entity string for a BOLD file with subject/session
-    prefix removed, suitable for use as the *suffix* argument to
-    build_output_name.
-
-    E.g. given bold_file ending in
-        sub-hp01_ses-01_task-pRFLE_run-03_sdc-bold.nii.gz
-    returns
-        task-pRFLE_run-03_sdc-bold
-    """
-    name = _strip_extensions(Path(bold_file)).name
-    prefix = '_'.join(t for t in [subject, session] if t) + '_'
-    if name.startswith(prefix):
-        name = name[len(prefix):]
-    return name
-
-
-# ---------------------------------------------------------------------------
 # Step functions
 # ---------------------------------------------------------------------------
 
 def make_bref_master(
-    input_dir: str,
+    subject_input_dir: str,
     subject: str,
     session: str,
     subject_output_dir: str,
@@ -105,32 +81,38 @@ def make_bref_master(
     docker_image: str,
 ) -> str:
     """
-    Copy the first SBREF in *input_dir* as BREF_MASTER, gzip if needed,
-    and reorient to standard.
+    Build BREF_MASTER from the first SBREF found in *subject_input_dir*.
 
     Returns the host path to BREF_MASTER.nii.gz.
     """
     pattern = os.path.join(
-        input_dir, '{}_{}*sbref*.nii*'.format(subject, session))
+        subject_input_dir, '{}_{}*sbref*.nii*'.format(subject, session))
     sbrefs = sorted(glob.glob(pattern))
-    if not sbrefs:
-        raise FileNotFoundError(
-            'No SBREF files found matching: {}'.format(pattern))
-
-    sbref_src = sbrefs[0]
-    print('  Using SBREF as BREF_MASTER: {}'.format(sbref_src))
 
     bref_master = build_output_name(
         subject_output_dir, subject, session, 'BREF_MASTER')
 
-    if sbref_src.endswith('.nii'):
-        nii_dst = bref_master.replace('.gz', '')
-        shutil.copy(sbref_src, nii_dst)
-        subprocess.run(['gzip', nii_dst], check=True)
-    else:
-        shutil.copy(sbref_src, bref_master)
+    if sbrefs:
+        sbref_src = sbrefs[0]
+        print('  Using SBREF as BREF_MASTER: {}'.format(sbref_src))
 
-    # Stage into work_dir and run fslreorient2std via run_cmd
+        if sbref_src.endswith('.nii'):
+            nii_dst = bref_master.replace('.gz', '')
+            shutil.copy(sbref_src, nii_dst)
+            subprocess.run(['gzip', nii_dst], check=True)
+        else:
+            shutil.copy(sbref_src, bref_master)
+
+        note = 'sbref - {} was used as BREF_MASTER\n'.format(sbref_src)
+
+    else:
+        raise FileNotFoundError(
+            'No SBREF files found in {}'.format(subject_input_dir))
+
+    with open(note_file, 'a') as fh:
+        fh.write(note)
+
+    # Reorient to standard (in-place via work_dir)
     _stage(bref_master, work_dir)
     run_cmd(
         work_dir=work_dir,
@@ -139,9 +121,6 @@ def make_bref_master(
              _container_path(work_dir, os.path.basename(bref_master), docker_image)],
     )
     shutil.copy(os.path.join(work_dir, os.path.basename(bref_master)), bref_master)
-
-    with open(note_file, 'a') as fh:
-        fh.write('sbref - {} was used as BREF_MASTER\n'.format(sbref_src))
 
     return bref_master
 
@@ -306,6 +285,7 @@ def register_sbref_to_master(
     master_c = _container_path(work_dir, os.path.basename(bref_master), docker_image)
 
     mat_name = '{}_{}_brefi_to_bref_master.mat'.format(task_label, run_label)
+    vol_name = '{}_{}_brefi_to_bref_master.nii.gz'.format(task_label, run_label)
     mat_c    = _container_path(work_dir, mat_name, docker_image)
 
     run_cmd(
@@ -318,6 +298,7 @@ def register_sbref_to_master(
             '-dof',  '6',
             '-cost', 'normcorr',
             '-omat', mat_c,
+            '-out', vol_name,
         ],
     )
 
@@ -437,9 +418,9 @@ def apply_xfm4d(
             '-out',         res_ref_hd_c,
         ],
     )
-    
+
     bold_fs_out_c   = _container_path(work_dir, os.path.basename(bold_fs_out),       docker_image)
-    combined_mats_c = _container_path(work_dir, os.path.basename(combined_mats_dir), docker_image)   
+    combined_mats_c = _container_path(work_dir, os.path.basename(combined_mats_dir), docker_image)
 
     run_cmd(
         work_dir=work_dir,
@@ -454,6 +435,8 @@ def apply_xfm4d(
             '-interp', 'trilinear',
         ],
     )
+
+
 def project_to_surface(
     bold_fs_out: str,
     subject: str,
@@ -720,6 +703,7 @@ def run_pipeline(
     subjects_dir: str = None,
     docker_image: str = 'local',
     overwrite: dict = None,
+    append_sub_ses: bool = True,
 ) -> dict:
     """
     Run the full motion correction + registration + surface projection pipeline.
@@ -741,15 +725,19 @@ def run_pipeline(
 
     input_dir  = str(Path(input_dir).resolve())
     output_dir = str(Path(output_dir).resolve())
+    if append_sub_ses:
+        subject_input_dir  = os.path.join(input_dir,  subject, session)
+        subject_output_dir = os.path.join(output_dir, subject, session)
+    else:
+        subject_input_dir  = input_dir
+        subject_output_dir = output_dir
+
+    os.makedirs(subject_output_dir, exist_ok=True)
 
     if subjects_dir is None:
         subjects_dir = os.environ.get('SUBJECTS_DIR', '')
     if not subjects_dir:
-        raise ValueError(
-            '--subjects-dir not set and $SUBJECTS_DIR is empty.')
-
-    subject_output_dir = os.path.join(output_dir, subject, session)
-    os.makedirs(subject_output_dir, exist_ok=True)
+        raise ValueError('--subjects-dir not set and $SUBJECTS_DIR is empty.')
 
     session_work_dir = os.path.join(subject_output_dir, '_session_work')
     os.makedirs(session_work_dir, exist_ok=True)
@@ -782,7 +770,7 @@ def run_pipeline(
         'Step 1: BREF_MASTER',
     ):
         bref_master_final = make_bref_master(
-            input_dir=input_dir,
+            subject_input_dir=subject_input_dir,
             subject=subject,
             session=session,
             subject_output_dir=subject_output_dir,
@@ -844,7 +832,7 @@ def run_pipeline(
     # Discover BOLD runs
     # ------------------------------------------------------------------
     bold_pattern = os.path.join(
-        input_dir, '{}_{}*bold*.nii*'.format(subject, session))
+        subject_input_dir, '{}_{}*bold*.nii*'.format(subject, session))
     bold_files = sorted(glob.glob(bold_pattern))
     if not bold_files:
         raise FileNotFoundError(
@@ -864,26 +852,56 @@ def run_pipeline(
 
         run_label, task_label = get_labels(bold_file)
 
+        # ------------------------------------------------------------------
+        # Locate per-run sbref, or synthesise one from vol 0 of this BOLD run
+        # ------------------------------------------------------------------
         if run_label:
             sbref_pat = os.path.join(
-                input_dir,
+                subject_input_dir,
                 '{}_{}_{}_{}*sbref*.nii*'.format(
                     subject, session, task_label, run_label))
             sbref_matches = sorted(glob.glob(sbref_pat))
         else:
             all_sbrefs = glob.glob(os.path.join(
-                input_dir,
+                subject_input_dir,
                 '{}_{}_{}_*sbref*.nii*'.format(subject, session, task_label)))
             sbref_matches = [f for f in all_sbrefs
                              if not re.search(r'run-\d+', os.path.basename(f))]
 
-        if not sbref_matches:
-            raise FileNotFoundError(
-                'No SBREF found for {}'.format(bold_file))
-        sbref_file = sbref_matches[0]
+        if sbref_matches:
+            sbref_file   = sbref_matches[0]
+            sbref_source = 'input'
+        else:
+            # Build the expected output name and skip recompute if it exists
+            parts = [subject]
+            if session:
+                parts.append(session)
+            if task_label:
+                parts.append(task_label)
+            if run_label:
+                parts.append(run_label)
+            parts.append('desc-vol0bold_sbref')
+            synthetic_sbref = os.path.join(
+                subject_output_dir, '_'.join(parts) + '.nii.gz')
+
+            if not Path(synthetic_sbref).exists():
+                print('  No SBREF found — extracting vol 0 as synthetic sbref...')
+                synthetic_sbref = make_first_vol_sbref(
+                    bold_file=bold_file,
+                    subject=subject,
+                    session=session,
+                    run_label=run_label,
+                    task_label=task_label,
+                    subject_output_dir=subject_output_dir,
+                )
+            else:
+                print('  No SBREF found — reusing existing synthetic sbref.')
+
+            sbref_file   = synthetic_sbref
+            sbref_source = 'vol-0 (synthetic)'
 
         print('  BOLD  : {}'.format(bold_file))
-        print('  SBREF : {}'.format(sbref_file))
+        print('  SBREF : {} [{}]'.format(sbref_file, sbref_source))
 
         run_results = process_run(
             bold_file=bold_file,
@@ -931,6 +949,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p.add_argument('--ses',          default='ses-01',
                    help='Session label')
+
+    def str2bool(v):
+        if v.lower() in ('true', '1', 'yes'):
+            return True
+        elif v.lower() in ('false', '0', 'no'):
+            return False
+        raise argparse.ArgumentTypeError(
+            "Boolean value expected, got '{}'".format(v))
+
+    p.add_argument('--append-sub-ses', default=True, type=str2bool)
     p.add_argument('--subjects-dir', default=None,
                    help='FreeSurfer SUBJECTS_DIR (default: $SUBJECTS_DIR)')
     p.add_argument('--docker',
@@ -974,6 +1002,7 @@ def main():
         session=args.ses,
         subjects_dir=args.subjects_dir,
         docker_image=args.docker,
+        append_sub_ses=args.append_sub_ses,
         overwrite=overwrite,
     )
 

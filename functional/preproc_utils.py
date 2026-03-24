@@ -14,6 +14,31 @@ import re
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _bold_base(bold_file: str, subject: str, session: str) -> str:
+    """
+    Return the BIDS entity string for a BOLD file with subject/session
+    prefix removed, suitable for use as the *suffix* argument to
+    build_output_name.
+
+    E.g. given bold_file ending in
+        sub-hp01_ses-01_task-pRFLE_run-03_sdc-bold.nii.gz
+    returns
+        task-pRFLE_run-03_sdc-bold
+    """
+    name = _strip_extensions(Path(bold_file)).name
+    prefix = '_'.join(t for t in [subject, session] if t) + '_'
+    if name.startswith(prefix):
+        name = name[len(prefix):]
+    return name
+
+
+def _strip_extensions(p: Path) -> Path:
+    """Strip .nii and/or .gz suffixes from a Path."""
+    while p.suffix in ('.gz', '.nii'):
+        p = p.with_suffix('')
+    return p
+
 def _stage(src: str, work_dir: str) -> str:
     """
     Copy *src* into *work_dir* if it is not already there.

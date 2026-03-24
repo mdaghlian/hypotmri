@@ -12,7 +12,7 @@ SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
 For fsl
 ```bash 
 
-python s01_sdc_fsl.py --bids_dir $BIDS_DIR --output_dir $BIDS_DIR/derivatives/sf1_sdc_fsl_test --sub sub-hp01 --ses ses-01 --task pRFLE 
+python s01_sdc_fsl.py --bids-dir $BIDS_DIR --output-dir $BIDS_DIR/derivatives/sf1_sdc_fsl_test --sub sub-hp01 --ses ses-01 --task pRFLE 
 ```
 
 For afni
