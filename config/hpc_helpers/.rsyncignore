@@ -1,0 +1,34 @@
+# --- System ---
+.DS_Store
+.Spotlight-V100
+.Trashes
+*.swp
+*.swo
+*~
+.AppleDouble
+
+# --- Version control ---
+<!-- .git/ -->
+<!-- .gitignore -->
+
+# --- Python ---
+__pycache__/
+*.pkl
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+<!-- dist/ -->
+<!-- build/ -->
+<!-- .venv/ -->
+<!-- env/ -->
+
+# --- Containers ---
+*.sif
+*.img
+
+# --- Neuroimaging intermediates ---
+<!-- work/ -->
+<!-- scratch/ -->
+<!-- tmp/ -->
+<!-- *.log -->

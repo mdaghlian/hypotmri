@@ -11,7 +11,7 @@ TODO:
 [] Containerisation 
 
 
-## setup - see config/local_setup.md
+## setup - full details [./config/local_setup.md](./config/local_setup.md)
 In brief: 
 - Install requires a python package manager of your choice (mamba/conda) & docker (or singularity)
 - Scripts in /config manage most of the software installation

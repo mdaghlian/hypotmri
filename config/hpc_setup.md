@@ -139,17 +139,20 @@ export PIPELINE_DIR="/home/<ucl-id>/pipeline"
 source "${PIPELINE_DIR}/config/config_pipeline.sh"
 
 # Set the following variables to be cluster friendly (i.e., not docker)
+export PC_LOCATION="HPC"
 export CONTAINER_TYPE="apptainer" # docker or singularity
 export PYPACKAGE_MANAGER="conda"
 
 ml apptainer/1.2.4-1
 # Apptainer build and cache directories
-export APPTAINER_TMPDIR="${XDG_RUNTIME_DIR}/${USER}_apptainerbuild"
-mkdir -p "$APPTAINER_TMPDIR"
+export APPTAINER_TMPDIR="$HOME/Scratch/.apptainer/tmp"
+[[ ! -d "$APPTAINER_TMPDIR" ]] && mkdir -p "$APPTAINER_TMPDIR"
 
 export APPTAINER_CACHEDIR="$HOME/Scratch/.apptainer"
-# -> if it doesn't exists make it
 [[ ! -d "$APPTAINER_CACHEDIR" ]] && mkdir -p "$APPTAINER_CACHEDIR"
+
+REMOTE_PROJECT_DIRS="$HOME/Scratch/projects/"
+[[ ! -d "$REMOTE_PROJECT_DIRS" ]] && mkdir -p "$REMOTE_PROJECT_DIRS"
 
 ```
 To save press ```ctrl+x```

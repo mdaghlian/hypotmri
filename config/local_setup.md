@@ -70,5 +70,5 @@ cd "${PIPELINE_DIR}/config"
 # Install python environments
 bash s00_python_environments.sh
 # Install the docker images 
-bash s00_docker.sh
+bash s00_containers.sh
 ```
