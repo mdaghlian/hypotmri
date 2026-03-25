@@ -9,9 +9,12 @@ Make sure you have updated project specific information in you /config/config_pi
 - For now just doing the anatomy
 
 ```bash
-# e.g., 
-BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
-bash s01_fmriprep_anat_only.sh --bids-dir $BIDS_DIR --sub hp01 --ses 01
+BIDS_DIR="/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/"
+bash s01_fmriprep_anat_only.sh --bids-dir ${BIDS_DIR} --sub sub-hp01 --ses ses-01
+```
+to submit to the cluster with qsub run 
+```bash
+bash s01_hpc_submit.sh --bids-dir ${BIDS_DIR} --sub sub-hp01 --ses ses-01
 ```
 
 *TODO* - add a QC here

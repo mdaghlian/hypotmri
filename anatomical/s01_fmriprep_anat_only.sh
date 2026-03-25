@@ -1,4 +1,7 @@
 #!/bin/bash
+#$ -S /bin/bash
+#$ -V
+#$ -cwd
 set -e
 
 # --- Usage Function ---
@@ -51,11 +54,11 @@ echo "-------------------------------------------------------"
 
 # [1] Create FPREP BIDS
 FPREP_BIDS_DIR=$BIDS_DIR/derivatives/FPREP_BIDS
-if [[ ! -f "${FPREP_BIDS_DIR}" ]]; then
+if [[ ! -d "${FPREP_BIDS_DIR}" ]]; then
     mkdir -p ${FPREP_BIDS_DIR}
 fi 
 FPREP_BIDS_DIR_WF=${BIDS_DIR}/derivatives/FPREP_BIDS_WF
-if [[ ! -f "${FPREP_BIDS_DIR_WF}" ]]; then
+if [[ ! -d "${FPREP_BIDS_DIR_WF}" ]]; then
     mkdir -p $FPREP_BIDS_DIR_WF
 fi 
 # -> Create bids json if it doesn't exist
@@ -67,7 +70,7 @@ fi
 # -> Create freesurfer output, if it doesn't exist
 # Note this is inside the "true" BIDS_DIR 
 SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
-if [[ ! -f "${SUBJECTS_DIR}" ]]; then
+if [[ ! -d "${SUBJECTS_DIR}" ]]; then
     mkdir -p "${SUBJECTS_DIR}"
 fi
 
@@ -78,13 +81,14 @@ fi
 mkdir -p "${FPREP_SES}"
 
 echo "Copying anatomy" 
-ANAT_SRC="${BIDS_DIR}/${SUBJECT}/ses-01/anat"
+ANAT_SRC="${BIDS_DIR}/${SUBJECT}/${SESSION}/anat"
 cp -r ${ANAT_SRC} ${FPREP_SES}/
-
+echo "running fprep in ${FPREP_BIDS_DIR} and ${FPREP_SIF}"
+[[ ! -d "${BIDS_DIR}/derivatives/fmriprep" ]] && mkdir -p "${BIDS_DIR}/derivatives/fmriprep"
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then
     docker run --rm \
       -v $FPREP_BIDS_DIR:/data:ro \
-      -v $BIDS_DIR/derivatives:/out \
+      -v $BIDS_DIR/derivatives/fmriprep:/out \
       -v $FPREP_BIDS_DIR_WF:/work \
       -v $SUBJECTS_DIR:/fsdir \
       -v $PIPELINE_DIR/config/license.txt:/license.txt \
@@ -102,7 +106,7 @@ elif [[ "$CONTAINER_TYPE" == "apptainer" || "$CONTAINER_TYPE" == "singularity" ]
     ${CONTAINER_TYPE} run \
       --cleanenv \
       -B $FPREP_BIDS_DIR:/data \
-      -B $BIDS_DIR/derivatives:/out \
+      -B $BIDS_DIR/derivatives/fmriprep:/out \
       -B $FPREP_BIDS_DIR_WF:/work \
       -B $SUBJECTS_DIR:/fsdir \
       -B $PIPELINE_DIR/config/license.txt:/license.txt \

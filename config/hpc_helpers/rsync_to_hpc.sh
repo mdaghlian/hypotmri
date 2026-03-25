@@ -3,7 +3,7 @@ set -e
 
 # --- Usage ---
 usage() {
-    echo "Usage: $0 --sub <ID> [--ses <ID>] [--raw] [--deriv <name>] [--bids_dir <path>] [--remote <path>]"
+    echo "Usage: $0 --sub <ID> [--ses <ID>] [--raw] [--raw-anat] [--deriv <name>] [--bids-dir <path>] [--remote <path>]"
     echo ""
     echo "Required Arguments:"
     echo "  --sub         Subject label (e.g., sub-01)"
@@ -11,12 +11,13 @@ usage() {
     echo ""
     echo "One of:"
     echo "  --raw         Sync rawdata for subject/session"
+    echo "  --raw-anat    Sync only the anat/ folder for subject/session"
     echo "  --deriv       Derivative name to sync (e.g., fmriprep, freesurfer)"
     echo ""
     echo "Optional Arguments (fall back to environment variables):"
-    echo "  --bids_dir    Local BIDS dir  (default: \$BIDS_DIR)"
+    echo "  --bids-dir    Local BIDS dir  (default: \$BIDS_DIR)"
     echo "  --remote      Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
-    echo "  --dry_run     Show what would be transferred without doing it"
+    echo "  --dry-run     Show what would be transferred without doing it"
     echo "  --help        Display this help message"
     exit 1
 }
@@ -24,6 +25,7 @@ usage() {
 # --- Parse Arguments ---
 DRY_RUN=""
 RAW=0
+RAW_ANAT=0
 DERIV=""
 SESSION=""
 SUBJECT=""
@@ -32,18 +34,18 @@ ARG_REMOTE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids_dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
+        --bids-dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
         --remote)     ARG_REMOTE="$2";   shift 2 ;;
         --sub)        SUBJECT="$2";      shift 2 ;;
         --ses)        SESSION="$2";      shift 2 ;;
         --raw)        RAW=1;             shift   ;;
+        --raw-anat)   RAW_ANAT=1;        shift   ;;
         --deriv)      DERIV="$2";        shift 2 ;;
-        --dry_run)    DRY_RUN="--dry-run"; shift ;;
+        --dry-run)    DRY_RUN="--dry-run"; shift ;;
         --help)       usage ;;
         *)            echo "Unknown argument: $1"; usage ;;
     esac
 done
-
 
 # -> make subject & session robust
 SUBJECT="sub-${SUBJECT#sub-}"
@@ -52,12 +54,14 @@ SESSION="ses-${SESSION#ses-}"
 # --- Resolve BIDS dirs (arg > env) ---
 BIDS_DIR="${ARG_BIDS_DIR:-$BIDS_DIR}"
 REMOTE="${ARG_REMOTE:-$REMOTE_BIDS_DIR}"
+
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]]  && echo "Error: --bids_dir not set and \$BIDS_DIR not in environment"          && usage
 [[ -z "$REMOTE" ]]    && echo "Error: --remote not set and \$REMOTE_BIDS_DIR not in environment"     && usage
 [[ -z "$SUBJECT" ]]   && echo "Error: --sub required"                                                && usage
 [[ -z "$SESSION" ]]   && echo "Error: --ses required"                                                && usage
-[[ $RAW -eq 0 && -z "$DERIV" ]] && echo "Error: at least one of --raw or --deriv must be specified" && usage
+[[ $RAW -eq 0 && $RAW_ANAT -eq 0 && -z "$DERIV" ]] \
+    && echo "Error: at least one of --raw, --raw-anat, or --deriv must be specified" && usage
 
 # --- Locate exclude file ---
 EXCLUDE_FILE="${RSYNC_IGNORE:-$(dirname "$0")/.rsyncignore}"
@@ -69,7 +73,6 @@ else
     EXCLUDE_OPT="--exclude-from=${EXCLUDE_FILE}"
 fi
 
-
 RSYNC_OPTS="-avz --progress --ignore-existing $DRY_RUN $EXCLUDE_OPT"
 
 # --- Helper ---
@@ -79,7 +82,15 @@ do_rsync() {
     echo ""
     echo "  src: $src"
     echo "  dst: $dst"
-    mkdir -p "$dst"
+
+    # Create destination directory - handle both local and remote paths
+    if [[ "$dst" == *:* ]]; then
+        local remote_host="${dst%%:*}"
+        local remote_path="${dst#*:}"
+        ssh "$remote_host" "mkdir -p '${remote_path}'"
+    else
+        mkdir -p "$dst"
+    fi
 
     # Files that would transfer without --ignore-existing
     local all_files
@@ -114,12 +125,18 @@ echo "  Remote:   $REMOTE"
 echo "  Subject:  $SUBJECT"
 echo "  Session:  $SESSION"
 echo "  Raw:      $([ $RAW -eq 1 ] && echo yes || echo no)"
+echo "  Raw anat: $([ $RAW_ANAT -eq 1 ] && echo yes || echo no)"
 echo "  Deriv:    ${DERIV:-none}"
 echo "  Dry run:  ${DRY_RUN:+yes}"
 echo "-------------------------------------------------------"
 
 # [1] Top-level BIDS metadata
 echo "Syncing top-level BIDS metadata..."
+if [[ "$REMOTE" == *:* ]]; then
+    ssh "${REMOTE%%:*}" "mkdir -p '${REMOTE#*:}'"
+else
+    mkdir -p "$REMOTE"
+fi
 rsync -avz $DRY_RUN $EXCLUDE_OPT \
     --include="dataset_description.json" \
     --include=".bidsignore" \
@@ -130,15 +147,23 @@ rsync -avz $DRY_RUN $EXCLUDE_OPT \
     "${BIDS_DIR}/" \
     "${REMOTE}/"
 
-# [2] Raw data
+# [2] Raw data (full session)
 if [[ $RAW -eq 1 ]]; then
-    echo "Syncing raw data..."
+    echo "Syncing raw data (full session)..."
     do_rsync \
         "${BIDS_DIR}/${SUBJECT}/${SESSION}" \
         "${REMOTE}/${SUBJECT}/${SESSION}"
 fi
 
-# [3] Derivatives
+# [3] Raw anat only
+if [[ $RAW_ANAT -eq 1 ]]; then
+    echo "Syncing raw anat only..."
+    do_rsync \
+        "${BIDS_DIR}/${SUBJECT}/${SESSION}/anat" \
+        "${REMOTE}/${SUBJECT}/${SESSION}/anat"
+fi
+
+# [4] Derivatives
 if [[ -n "$DERIV" ]]; then
     echo "Syncing derivative: ${DERIV}..."
     do_rsync \
