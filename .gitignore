@@ -8,3 +8,4 @@ license.txt
 **crash-**
 **/.DS_Store
 .vscode*
+/config/project_*.sh

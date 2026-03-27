@@ -67,13 +67,18 @@ Add the following to your `~/.ssh/config` file (create it if it doesn't exist). 
 # The Gateway (UCL's external-facing SSH jump host)
 Host ucl-gateway
     HostName ssh-gateway.ucl.ac.uk
-    User <your-ucl-username>
+    User <userid>
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    AddKeysToAgent yes
 
-# The Internal Cluster (proxied automatically via the gateway)
 Host ucl-work
     HostName myriad.rc.ucl.ac.uk
-    User <your-ucl-username>
+    User <userid>
     ProxyJump ucl-gateway
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    AddKeysToAgent yes
 ```
 
 Replace `<your-ucl-username>` with your UCL user ID (e.g. `ucjvabc`).
@@ -112,9 +117,13 @@ ml avail # see all the modules which are available on the cluster
 ```
 --- 
 ## 6. Setup pipeline on cluster
+**ASSUMING YOU ALREADY SETUP LOCALLY**:
 Copy your local code to the cluster
 ```bash
-rsync -avz /local/path/to/pipeline/ ucl-work:~/pipeline
+rsync_code.sh
+# which runs...
+# rsync -avz /local/path/to/pipeline/ ucl-work:~/pipeline
+
 ```
 log in to add conda module 
 ```bash 
@@ -178,19 +187,7 @@ bash s00_containers.sh
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-# TODO
+# WORK IN PROGRESS 
 ---
 
 # How the pipeline (will) integrate with the cluster 
@@ -203,12 +200,6 @@ bash s00_containers.sh
 - Finally for each stage 
 For each stage in the pipeline an additional  
 
-
-
----
-
-## Troubleshooting
-
-- **Permission denied:** Make sure `~/.ssh/config` has correct permissions — `chmod 600 ~/.ssh/config` and `chmod 700 ~/.ssh/`.
-- **Still asked for password:** Check that `ssh-copy-id` succeeded for *both* the gateway and `ucl-work`. The cluster step is often missed.
-- **Still not working:** Maybe you need to be connected to ucl vpn (? not checked marcus todo). see [https://www.ucl.ac.uk/isd/services/get-connected/ucl-virtual-private-network-vpn]
+# TODO
+- [ ] Get the installation stuff all in one line script? 
+- [ ] Pull out submission stuff from s01_hpc_submit.sh and make it more general purpose

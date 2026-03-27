@@ -6,7 +6,16 @@ If you have a problem and then you find a solution, please contact me (m.daghlia
 
 - **Permission denied:** Make sure `~/.ssh/config` has correct permissions — `chmod 600 ~/.ssh/config` and `chmod 700 ~/.ssh/`.
 - **Still asked for password:** Check that `ssh-copy-id` succeeded for *both* the gateway and `ucl-work`. The cluster step is often missed.
+
+- **Another potential cause:** SSH key not loaded into the agent. If you run `ssh-add -l` and get ```no identities``` as output, this confirms it.
+**Fix:**
+```bash
+ssh-add ~/.ssh/id_ed25519
+```
+Then retry `ssh ucl-work` as normal.
+
 - **Still not working:** Maybe you need to be connected to ucl vpn see [https://www.ucl.ac.uk/isd/services/get-connected/ucl-virtual-private-network-vpn]
+
 
 ---
 ## rsync: `unexpected end of file` / child exit status 11

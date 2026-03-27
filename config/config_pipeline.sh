@@ -1,10 +1,16 @@
 #!/bin/bash
 
 # --- Default Values ---
-chmod +x "${PIPELINE_DIR}/config"
-chmod +x "${PIPELINE_DIR}/anatomical"
-chmod +x "${PIPELINE_DIR}/functional"
-
+# Make all .sh files in those directories executable
+chmod +x "${PIPELINE_DIR}/config"/*.sh
+chmod +x "${PIPELINE_DIR}/config/hpc_helpers/"/*.sh
+chmod +x "${PIPELINE_DIR}/anatomical"/*.sh
+chmod +x "${PIPELINE_DIR}/functional"/*.sh
+export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"
+export PATH="${PIPELINE_DIR}/config:${PATH}"
+export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"
+export PATH="${PIPELINE_DIR}/anatomical:${PATH}"
+export PATH="${PIPELINE_DIR}/functional:${PATH}"
 export PC_LOCATION="local"
 # --- Software versions ---
 export FREESURFER_VERSION="7.3.2"
@@ -50,9 +56,4 @@ export PYCTX_VERSION="1.3.0"
 
 
 # --- PROJECT INFORMATION ---
-export PROJ_NAME="hypot"
-export BIDS_DIR="/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot"
-export SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
-export UCL_SERVER_ID="ucl-work"
-export REMOTE_BIDS_DIR_PATH="/home/ucjvmdd/Scratch/projects/${PROJ_NAME}"
-export REMOTE_BIDS_DIR="${UCL_SERVER_ID}:${REMOTE_BIDS_DIR_PATH}"
+source $PIPELINE_DIR/config/project_current.sh

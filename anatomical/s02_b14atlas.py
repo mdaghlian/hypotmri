@@ -13,6 +13,11 @@ def create_benson14_labels(subject, fsdir):
         9: 'TO1', 10: 'TO2', 11: 'V3b', 12: 'V3a',
     }
     
+    # Combined ROIs: name -> list of area_ids to merge
+    COMBINED_ROIS = {
+        'V1V2V3': [1, 2, 3],
+    }
+    subject = "sub-" + subject.removeprefix("sub-")
     print(f'Processing {subject}')
     
     surf_dir = os.path.join(fsdir, subject, 'surf')
@@ -56,6 +61,19 @@ def create_benson14_labels(subject, fsdir):
                         x, y, z = coords[v]
                         f.write(f'{v}  {x:.3f}  {y:.3f}  {z:.3f} 0.0000000000\n')
         
+        # Create combined ROI labels (e.g. V1V2V3)
+        for combo_name, area_ids in COMBINED_ROIS.items():
+            vertices = np.where(np.isin(varea_data, area_ids))[0]
+            if len(vertices) > 0:
+                label_file = os.path.join(label_dir, f'{hemi}.b14_{combo_name}.label')
+                with open(label_file, 'w') as f:
+                    f.write(header)
+                    f.write(f'{len(vertices)}\n')
+                    for v in vertices:
+                        x, y, z = coords[v]
+                        f.write(f'{v}  {x:.3f}  {y:.3f}  {z:.3f} 0.0000000000\n')
+                print(f'  Created {hemi}.b14_{combo_name} ({len(vertices)} vertices)')
+
         # Create combined ALL label
         all_vertices = np.where(np.isin(varea_data, list(B14_AREAS.keys())))[0]
         all_file = os.path.join(label_dir, f'{hemi}.b14_ALL.label')
@@ -67,7 +85,6 @@ def create_benson14_labels(subject, fsdir):
                 f.write(f'{v}  {x:.3f}  {y:.3f}  {z:.3f} 0.0000000000\n')
         
         print(f'  Created {hemi} labels ({len(all_vertices)} total vertices)')
-
 
 def main():
     parser = argparse.ArgumentParser(

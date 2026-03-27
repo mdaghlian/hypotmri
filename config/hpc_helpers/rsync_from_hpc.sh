@@ -3,27 +3,25 @@ set -e
 
 # --- Usage ---
 usage() {
-    echo "Usage: $0 --sub <ID> [--ses <ID>] [--raw] [--deriv <name>] [--bids_dir <path>] [--remote <path>]"
+    echo "Usage: $0 --sub <ID> [--ses <ID>] [--deriv <name>] [--bids-dir <path>] [--remote <path>]"
     echo ""
     echo "Required Arguments:"
     echo "  --sub         Subject label (e.g., sub-01)"
     echo "  --ses         Session label (e.g., ses-01)"
     echo ""
     echo "One of:"
-    echo "  --raw         Sync rawdata for subject/session"
     echo "  --deriv       Derivative name to sync (e.g., fmriprep, freesurfer)"
     echo ""
     echo "Optional Arguments (fall back to environment variables):"
-    echo "  --bids_dir    Local BIDS dir  (default: \$BIDS_DIR)"
+    echo "  --bids-dir    Local BIDS dir  (default: \$BIDS_DIR)"
     echo "  --remote      Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
-    echo "  --dry_run     Show what would be transferred without doing it"
+    echo "  --dry-run     Show what would be transferred without doing it"
     echo "  --help        Display this help message"
     exit 1
 }
 
 # --- Parse Arguments ---
 DRY_RUN=""
-RAW=0
 DERIV=""
 SESSION=""
 SUBJECT=""
@@ -32,13 +30,12 @@ ARG_REMOTE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids_dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
+        --bids-dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
         --remote)     ARG_REMOTE="$2";   shift 2 ;;
         --sub)        SUBJECT="$2";      shift 2 ;;
         --ses)        SESSION="$2";      shift 2 ;;
-        --raw)        RAW=1;             shift   ;;
         --deriv)      DERIV="$2";        shift 2 ;;
-        --dry_run)    DRY_RUN="--dry-run"; shift ;;
+        --dry-run)    DRY_RUN="--dry-run"; shift ;;
         --help)       usage ;;
         *)            echo "Unknown argument: $1"; usage ;;
     esac
@@ -53,11 +50,11 @@ BIDS_DIR="${ARG_BIDS_DIR:-$BIDS_DIR}"
 REMOTE="${ARG_REMOTE:-$REMOTE_BIDS_DIR}"
 
 # --- Validate ---
-[[ -z "$BIDS_DIR" ]]  && echo "Error: --bids_dir not set and \$BIDS_DIR not in environment"          && usage
-[[ -z "$REMOTE" ]]    && echo "Error: --remote not set and \$REMOTE_BIDS_DIR not in environment"     && usage
-[[ -z "$SUBJECT" ]]   && echo "Error: --sub required"                                                && usage
-[[ -z "$SESSION" ]]   && echo "Error: --ses required"                                                && usage
-[[ $RAW -eq 0 && -z "$DERIV" ]] && echo "Error: at least one of --raw or --deriv must be specified" && usage
+[[ -z "$BIDS_DIR" ]]  && echo "Error: --bids-dir not set and \$BIDS_DIR not in environment" && usage
+[[ -z "$REMOTE" ]]    && echo "Error: --remote not set and \$REMOTE_BIDS_DIR not in environment" && usage
+[[ -z "$SUBJECT" ]]   && echo "Error: --sub required" && usage
+[[ -z "$SESSION" ]]   && echo "Error: --ses required" && usage
+[[ -z "$DERIV" ]]     && echo "Error: --deriv must be specified" && usage
 
 # --- Locate exclude file ---
 EXCLUDE_FILE="${RSYNC_IGNORE:-$(dirname "$0")/.rsyncignore}"
@@ -78,6 +75,7 @@ do_rsync() {
     echo ""
     echo "  src: $src"
     echo "  dst: $dst"
+
     mkdir -p "$dst"
 
     # Files that would transfer without --ignore-existing
@@ -112,33 +110,36 @@ echo "  Remote:   $REMOTE"
 echo "  Local:    $BIDS_DIR"
 echo "  Subject:  $SUBJECT"
 echo "  Session:  $SESSION"
-echo "  Raw:      $([ $RAW -eq 1 ] && echo yes || echo no)"
-echo "  Deriv:    ${DERIV:-none}"
+echo "  Deriv:    ${DERIV}"
 echo "  Dry run:  ${DRY_RUN:+yes}"
 echo "-------------------------------------------------------"
 
-# [1] Top-level BIDS metadata
-echo "Syncing top-level BIDS metadata..."
-rsync -avz $DRY_RUN $EXCLUDE_OPT \
-    --include="dataset_description.json" \
-    --include=".bidsignore" \
-    --include="participants.tsv" \
-    --include="participants.json" \
-    --exclude="*/" \
-    --exclude="*" \
-    "${REMOTE}/" \
-    "${BIDS_DIR}/"
+# [1] Derivatives
+if [[ "$DERIV" == "freesurfer" ]]; then
+    # FreeSurfer stores output as sub-##_ses-## rather than sub-##/ses-##
+    FS_LABEL="${SUBJECT}_${SESSION}"
+    FS_LOCAL="${BIDS_DIR}/derivatives/freesurfer"
 
-# [2] Raw data
-if [[ $RAW -eq 1 ]]; then
-    echo "Syncing raw data..."
+    echo "Syncing FreeSurfer derivative: ${FS_LABEL}..."
     do_rsync \
-        "${REMOTE}/${SUBJECT}/${SESSION}" \
-        "${BIDS_DIR}/${SUBJECT}/${SESSION}"
-fi
+        "${REMOTE}/derivatives/freesurfer/${FS_LABEL}" \
+        "${FS_LOCAL}/${FS_LABEL}"
 
-# [3] Derivatives
-if [[ -n "$DERIV" ]]; then
+    # Create sub-## symlink -> sub-##_ses-## if it doesn't already exist
+    SYMLINK="${FS_LOCAL}/${SUBJECT}"
+    if [[ -z "$DRY_RUN" ]]; then
+        if [[ -L "$SYMLINK" ]]; then
+            echo "  Symlink already exists: $SYMLINK -> $(readlink "$SYMLINK")"
+        elif [[ -e "$SYMLINK" ]]; then
+            echo "  ⚠️  $SYMLINK exists and is not a symlink — skipping symlink creation"
+        else
+            ln -s "${FS_LABEL}" "$SYMLINK"
+            echo "  Symlink created: $SYMLINK -> ${FS_LABEL}"
+        fi
+    else
+        echo "  [dry-run] Would create symlink: $SYMLINK -> ${FS_LABEL}"
+    fi
+else
     echo "Syncing derivative: ${DERIV}..."
     do_rsync \
         "${REMOTE}/derivatives/${DERIV}/${SUBJECT}/${SESSION}" \

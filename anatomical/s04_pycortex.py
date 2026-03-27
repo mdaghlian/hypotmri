@@ -6,7 +6,6 @@ import nibabel as nib
 import cortex
 import dpu_mini.pyctx_cannibalized.subsurf2 as pcx
 from dpu_mini.fs_tools import *
-from dpu_mini.utils import dag_hyphen_parse
 
 def quick_pycortex_import(sub, fsdir):
     cortex.freesurfer.import_subj(
@@ -46,7 +45,7 @@ def main():
     
     args = parser.parse_args()
     # ensure form of sub-##
-    args.subject = dag_hyphen_parse('sub', args.subject)
+    args.subject = "sub-" + args.subject.removeprefix("sub-")
     if not args.fsdir:
         parser.error('Set $SUBJECTS_DIR or use --fsdir')
     
