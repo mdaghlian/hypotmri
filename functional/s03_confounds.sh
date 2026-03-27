@@ -106,7 +106,8 @@ BIDS_IGNORE="${BIDS_DIR}/.bidsignore"
 if [[ ! -f "${BIDS_IGNORE}" ]]; then
     printf "**/ses-01/func/\n**/ses-01/fmap/\n" >> "$BIDS_IGNORE"
 fi
-
+# MD note higher fd-spike 0.9
+# --nprocs specify 
 fmriprep-docker \
   $BIDS_DIR \
   $BIDS_DIR/derivatives/fmriprep \

@@ -3,7 +3,7 @@
 s01_sdc_fsl.py
 ================
 Run FSL topup-based susceptibility distortion correction (SDC) for all BOLD
-runs belonging to a given subject / session / task, using FSL tools either
+runs belonging to a given subject / session , using FSL tools either
 locally or inside a Docker container.
 
 Pipeline per run
@@ -36,7 +36,6 @@ python s01_sdc_fsl.py \\
     --output-dir  /data/derivatives/sdc \\
     --sub         sub-01 \\
     --ses         ses-01 \\
-    --task        rest \\
     --fsl-docker  fnndsc/fsl:latest
 """
 
@@ -253,10 +252,7 @@ def process_run(
     if overwrite:
         ow.update(overwrite)
 
-    run_suffix_tokens = [t for t in ['task-' + task if task else None,
-                                     run_label] if t]
-    run_suffix = '_'.join(run_suffix_tokens) if run_suffix_tokens else 'run'
-
+    run_suffix = f'{task}_{run_label}'
     work_dir = os.path.join(subject_output_dir, run_suffix)
     os.makedirs(work_dir, exist_ok=True)
 
@@ -423,14 +419,13 @@ def run_pipeline(
     bids_dir: str,
     output_dir: str,
     subject: str,
-    session: str = 'ses-01',
-    task: str = '',
+    session: str,
     fsl_docker: str = os.environ.get('FSL_IMAGE', 'local'),
     topup_config: str = 'b02b0.cnf',
     overwrite: dict = None,
 ) -> dict:
     """
-    Discover all BOLD runs for *subject* / *session* / *task* and run the
+    Discover all BOLD runs for *subject* / *session* and run the
     full FSL topup SDC pipeline on each.
 
     Returns a dict mapping run labels -> per-run output dicts.
@@ -461,20 +456,18 @@ def run_pipeline(
     print(' Output    : {}'.format(output_dir))
     print(' Subject   : {}'.format(subject))
     print(' Session   : {}'.format(session))
-    print(' Task      : {}'.format(task))
     print(' FSL       : {}'.format(fsl_docker))
     print('-' * 55)
 
-    task_glob    = 'task-{}'.format(task) if task else 'task-*'
     bold_pattern = os.path.join(
         func_dir,
-        '{}_{}_{}_*_bold.nii*'.format(subject, session, task_glob))
+        '{}_{}_*_bold.nii*'.format(subject, session))
     bold_files = sorted(glob.glob(bold_pattern))
-
+    
     if not bold_files:
         raise FileNotFoundError(
-            'No BOLD files found for {}_{}_{}. '
-            'Searched: {}'.format(subject, session, task_glob, bold_pattern)
+            'No BOLD files found for {}_{}. '
+            'Searched: {}'.format(subject, session, bold_pattern)
         )
 
     print('\nFound {} BOLD run(s).'.format(len(bold_files)))
@@ -489,37 +482,26 @@ def run_pipeline(
 
         run_match = re.search(r'run-(\d+)', os.path.basename(bold_path))
         run_label = 'run-{}'.format(run_match.group(1)) if run_match else ''
+        task_match = re.search(r'task-([a-zA-Z0-9]+)', os.path.basename(bold_path))
+        task_label = 'task-{}'.format(task_match.group(1)) if task_match else ''
 
-        if run_label:
-            topup_matches = glob.glob(os.path.join(
-                fmap_dir,
-                '{}_{}_{}_{}*_epi.nii*'.format(
-                    subject, session, task_glob, run_label)))
-            sbref_matches = glob.glob(os.path.join(
-                func_dir,
-                '{}_{}_{}_{}*_sbref.nii*'.format(
-                    subject, session, task_glob, run_label)))
-        else:
-            topup_all = glob.glob(os.path.join(
-                fmap_dir,
-                '{}_{}_{}_*_epi.nii*'.format(subject, session, task_glob)))
-            sbref_all = glob.glob(os.path.join(
-                func_dir,
-                '{}_{}_{}_*_sbref.nii*'.format(subject, session, task_glob)))
-            topup_matches = [f for f in topup_all
-                             if not re.search(r'run-\d+', os.path.basename(f))]
-            sbref_matches = [f for f in sbref_all
-                             if not re.search(r'run-\d+', os.path.basename(f))]
+        topup_match = glob.glob(os.path.join(
+            fmap_dir,
+            f'{subject}_{session}*{task_label}*{run_label}*epi.nii*'))
+        sbref_match = glob.glob(os.path.join(
+            func_dir,
+            f'{subject}_{session}*{task_label}*{run_label}*bref.nii*'))
 
-        if not topup_matches:
+        if not topup_match:
             raise FileNotFoundError(
                 'No reverse-PE EPI found for {}.'.format(bold_path))
-        if not sbref_matches:
+        if not sbref_match:
             raise FileNotFoundError(
                 'No SBREF found for {}.'.format(bold_path))
-
-        topup_path = topup_matches[0]
-        sbref_path = sbref_matches[0]
+        assert len(topup_match)==1
+        assert len(sbref_match)==1
+        topup_path = topup_match[0]
+        sbref_path = sbref_match[0]
 
         print('  BOLD      : {}'.format(bold_path))
         print('  Reverse-PE: {}'.format(topup_path))
@@ -531,8 +513,8 @@ def run_pipeline(
             sbref_path=sbref_path,
             subject=subject,
             session=session,
-            task=task,
             run_label=run_label,
+            task=task_label,
             subject_output_dir=subject_output_dir,
             fsl_docker=fsl_docker,
             topup_config=topup_config,
@@ -562,17 +544,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     req = p.add_argument_group('required arguments')
-    req.add_argument('--bids-dir',   required=True,
+    req.add_argument('--bids-dir',   required=False,
+                     default=os.environ.get('BIDS_DIR', None),
                      help='BIDS root directory')
     req.add_argument('--output-dir', required=True,
-                     help='Output derivatives directory')
+                     help='Output file path')
     req.add_argument('--sub',        required=True,
                      help='Subject label (e.g. sub-01)')
 
     p.add_argument('--ses',          default='ses-01',
                    help='Session label')
-    p.add_argument('--task',         default='',
-                   help='Task label (empty = all tasks)')
     p.add_argument('--topup-config', default='b02b0.cnf',
                    help='FSL topup configuration file')
     p.add_argument('--fsl-docker',
@@ -608,13 +589,13 @@ def main():
         overwrite = {k: True for k in STEP_KEYS}
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
-
+    args.sub = "sub-" + args.sub.removeprefix("sub-")
+    args.ses = "ses-" + args.ses.removeprefix("ses-")
     run_pipeline(
         bids_dir=args.bids_dir,
         output_dir=args.output_dir,
         subject=args.sub,
         session=args.ses,
-        task=args.task,
         fsl_docker=args.fsl_docker,
         topup_config=args.topup_config,
         overwrite=overwrite,

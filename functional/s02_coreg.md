@@ -30,5 +30,5 @@ bash s02_coreg_moco2master.sh --input_dir $BIDS_DIR/derivatives/sf1_sdcAFNI --ou
 BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot
 export SUBJECTS_DIR=${BIDS_DIR}/derivatives/freesurfer
 
-python s02_coreg.py --input-dir $BIDS_DIR/derivatives/sf1_sdc_fsl_test --output-dir $BIDS_DIR/derivatives/sf2_coreg_src_sdcfslT01/sub-hp01/ses-01 --sub sub-hp01 --ses ses-01 
+python s02_coreg.py --input-dir $BIDS_DIR/derivatives/sf1_sdc_fsl_test --output-dir $BIDS_DIR/derivatives/sf2_coreg_src_sdcfslT01/ --sub sub-hp01 --ses ses-01 
 ```

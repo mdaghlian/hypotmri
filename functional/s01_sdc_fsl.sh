@@ -1,23 +1,17 @@
 #!/bin/bash
 set -e
 
-# --- Default Values ---
-SESSION="ses-01"
-TASK=""
-SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" &> /dev/null && pwd)
-
 # --- Usage Function ---
 usage() {
-    echo "Usage: $0 --bids_dir <path> --output_dir <path> --subject <ID> [options]"
+    echo "Usage: $0 --bids-dir <path> --output-dir <path> --subject <ID> [options]"
     echo ""
     echo "Required Arguments:"
-    echo "  --bids_dir      Path to the BIDS root directory"
-    echo "  --output_dir    Path to the output derivatives directory"
+    echo "  --bids-dir      BIDS directory"
     echo "  --sub           Subject label (e.g., sub-01)"
+    echo "  --ses           Session label (e.g., ses-01"
+    echo "  --output-file   Name of the file where outputs will be placed"
     echo ""
     echo "Optional Arguments:"
-    echo "  --ses           Session label (default: $SESSION)"
-    echo "  --task          Task label (default: $TASK)"
     echo "  --help          Display this help message"
     exit 1
 }
@@ -25,53 +19,50 @@ usage() {
 # --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids_dir)     BIDS_DIR="$2"; shift 2 ;;
-        --output_dir)   OUTPUT_DIR="$2"; shift 2 ;;
+        --bid-dir)      BIDS_DIR="$2"; shift 2 ;;
+        --output-file)  OUTPUT_FILE="$2"; shift 2 ;;
         --sub)          SUBJECT="$2"; shift 2 ;;
         --ses)          SESSION="$2"; shift 2 ;;
-        --task)         TASK="$2"; shift 2 ;;
         --help)         usage ;;
         *)              echo "Unknown argument: $1"; usage ;;
     esac
 done
 
+# -> make subject & session robust
+SUBJECT="sub-${SUBJECT#sub-}"
+SESSION="ses-${SESSION#ses-}"
+
+OUTPUT_DIR=${BIDS_DIR}/derivatives/${OUTPUT_FILE}
+[[ ! -d "${OUTPUT_DIR}" ]] && mkdir -p "${OUTPUT_DIR}"
+
 # --- Validation ---
 if [[ -z "$BIDS_DIR" || -z "$OUTPUT_DIR" || -z "$SUBJECT" ]]; then
-    echo "Error: --bids_dir, --output_dir, and --subject are required."
+    echo "Error: --bids-dir, --output-dir, and --subject are required."
     echo "Run with --help for details."
     exit 1
 fi
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
-echo "Processing: SDC"
+echo "Processing: SDC (FSL Method)"
 echo "-------------------------------------------------------"
 echo " BIDS Root: $BIDS_DIR"
 echo " Output:    $OUTPUT_DIR"
 echo " Subject:   $SUBJECT"
 echo " Session:   $SESSION"
-echo " Task:      $TASK"
 echo "-------------------------------------------------------"
 
 # Construct paths
 FUNC_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/func"
 FMAP_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/fmap"
 SUBJECT_OUTPUT_DIR="${OUTPUT_DIR}/${SUBJECT}/${SESSION}"
-
 # Create output directories
-mkdir -p "${SUBJECT_OUTPUT_DIR}"
-
-echo "=========================================="
-echo "Running topup correction"
-echo "Subject: ${SUBJECT}"
-echo "Session: ${SESSION}"
-echo "Task: ${TASK}"
-echo "=========================================="
+[[ ! -d "${SUBJECT_OUTPUT_DIR}" ]] &&mkdir -p "${SUBJECT_OUTPUT_DIR}"
 
 # Find all the BOLD runs
-BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}*_bold.nii*" | sort))    
+BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_*_bold.nii*" | sort))    
 if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}_task-${TASK}"
+    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}"
     exit 1
 else
     echo "Found ${#BOLD_FILES[@]} run(s) to process"
@@ -111,11 +102,12 @@ for BOLD in "${BOLD_FILES[@]}"; do
     
     # Create work directory for this run
     if [ -n "$RUN_LABEL" ]; then
-        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}"
+        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${RUN_LABEL}"
     else
-        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}"
+        WORK_DIR="${SUBJECT_OUTPUT_DIR}"
     fi
     mkdir -p "${WORK_DIR}"
+    rm -rf $WORK_DIR/*
     
     # Extract base filenames
     BOLD_BASE="${BOLD##*/}"       
@@ -123,14 +115,10 @@ for BOLD in "${BOLD_FILES[@]}"; do
     BOLD_BASE="${BOLD_BASE%.nii}" # Removes .nii if present
     BOLD_BASE="${BOLD_BASE%_bold}" # Removes _bold if present
 
-    # Find corresponding TOPUP and SBREF files
-    if [ -n "$RUN_LABEL" ]; then
-        TOPUP=$(find "${FMAP_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*epi.nii*" | head -n 1)
-        SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*sbref.nii*" | head -n 1)
-    else
-        TOPUP=$(find "${FMAP_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*epi.nii*" | grep -v "run-" | head -n 1)
-        SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*sbref.nii*" | grep -v "run-" | head -n 1)
-    fi
+    # Find corresponding reverse-PE (TOPUP) and SBREF files
+    TOPUP=$(find "${FMAP_DIR}" -name "${BOLD_BASE}_*epi.nii*" | head -n 1)
+    SBREF=$(find "${FUNC_DIR}" -name "${BOLD_BASE}_*sbref.nii*" | head -n 1)
+
     
     # Create the TOPUP pair that fsl needs
     echo "Creating TOPUP pair (mean images)..."
@@ -201,7 +189,7 @@ for BOLD in "${BOLD_FILES[@]}"; do
         --out="${SUBJECT_OUTPUT_DIR}/${BOLD_BASE}_sdc_bold.nii.gz"
     # Optional: Clean up working directory
     # Uncomment to remove intermediate files
-    # rm -rf "${WORK_DIR}"
+    rm -rf "${WORK_DIR}"
     
 done
 

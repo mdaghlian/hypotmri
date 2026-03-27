@@ -1,23 +1,17 @@
 #!/bin/bash
 set -e
 
-# --- Default Values ---
-SESSION="ses-01"
-TASK=""
-SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" &> /dev/null && pwd)
-
 # --- Usage Function ---
 usage() {
-    echo "Usage: $0 --bids_dir <path> --output_dir <path> --subject <ID> [options]"
+    echo "Usage: $0 --bids-dir <path> --output-dir <path> --subject <ID> [options]"
     echo ""
     echo "Required Arguments:"
-    echo "  --bids_dir      Path to the BIDS root directory"
-    echo "  --output_dir    Path to the output derivatives directory"
+    echo "  --bids-dir      BIDS directory"
     echo "  --sub           Subject label (e.g., sub-01)"
+    echo "  --ses           Session label (e.g., ses-01"
+    echo "  --output-file   Name of the file where outputs will be placed"
     echo ""
     echo "Optional Arguments:"
-    echo "  --ses           Session label (default: $SESSION)"
-    echo "  --task          Task label (default: $TASK)"
     echo "  --help          Display this help message"
     exit 1
 }
@@ -25,19 +19,25 @@ usage() {
 # --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids_dir)     BIDS_DIR="$2"; shift 2 ;;
-        --output_dir)   OUTPUT_DIR="$2"; shift 2 ;;
+        --bid-dir)      BIDS_DIR="$2"; shift 2 ;;
+        --output-file)  OUTPUT_FILE="$2"; shift 2 ;;
         --sub)          SUBJECT="$2"; shift 2 ;;
         --ses)          SESSION="$2"; shift 2 ;;
-        --task)         TASK="$2"; shift 2 ;;
         --help)         usage ;;
         *)              echo "Unknown argument: $1"; usage ;;
     esac
 done
 
+# -> make subject & session robust
+SUBJECT="sub-${SUBJECT#sub-}"
+SESSION="ses-${SESSION#ses-}"
+
+OUTPUT_DIR=${BIDS_DIR}/derivatives/${OUTPUT_FILE}
+[[ ! -d "${OUTPUT_DIR}" ]] && mkdir -p "${OUTPUT_DIR}"
+
 # --- Validation ---
 if [[ -z "$BIDS_DIR" || -z "$OUTPUT_DIR" || -z "$SUBJECT" ]]; then
-    echo "Error: --bids_dir, --output_dir, and --subject are required."
+    echo "Error: --bids-dir, --output-dir, and --subject are required."
     echo "Run with --help for details."
     exit 1
 fi
@@ -50,7 +50,6 @@ echo " BIDS Root: $BIDS_DIR"
 echo " Output:    $OUTPUT_DIR"
 echo " Subject:   $SUBJECT"
 echo " Session:   $SESSION"
-echo " Task:      $TASK"
 echo "-------------------------------------------------------"
 
 # Construct paths
@@ -59,8 +58,8 @@ FMAP_DIR="${BIDS_DIR}/${SUBJECT}/${SESSION}/fmap"
 SUBJECT_OUTPUT_DIR="${OUTPUT_DIR}/${SUBJECT}/${SESSION}"
 CURRENT_DIR=$PWD
 # Create output directories
-mkdir -p "${SUBJECT_OUTPUT_DIR}"
-# remove anything inside 
+[[ ! -d "${SUBJECT_OUTPUT_DIR}" ]] &&mkdir -p "${SUBJECT_OUTPUT_DIR}"
+
 cd $SUBJECT_OUTPUT_DIR
 
 echo "=========================================="
@@ -71,9 +70,9 @@ echo "Task: ${TASK}"
 echo "=========================================="
 
 # Find all the BOLD runs
-BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}*_bold.nii*" | sort))    
+BOLD_FILES=($(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_*_bold.nii*" | sort))    
 if [ ${#BOLD_FILES[@]} -eq 0 ]; then
-    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}_task-${TASK}"
+    echo "Error: No BOLD files found for ${SUBJECT}_${SESSION}"
     exit 1
 else
     echo "Found ${#BOLD_FILES[@]} run(s) to process"
@@ -100,12 +99,13 @@ for BOLD in "${BOLD_FILES[@]}"; do
     
     # Create work directory for this run
     if [ -n "$RUN_LABEL" ]; then
-        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}_${RUN_LABEL}"
+        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${RUN_LABEL}"
     else
-        WORK_DIR="${SUBJECT_OUTPUT_DIR}/${TASK}"
+        WORK_DIR="${SUBJECT_OUTPUT_DIR}"
     fi
     mkdir -p "${WORK_DIR}"
     rm -rf $WORK_DIR/*
+
     # Extract base filenames
     BOLD_BASE="${BOLD##*/}"       
     BOLD_BASE="${BOLD_BASE%.gz}"  # Removes .gz if present
@@ -113,17 +113,12 @@ for BOLD in "${BOLD_FILES[@]}"; do
     BOLD_BASE="${BOLD_BASE%_bold}" # Removes _bold if present
 
     # Find corresponding reverse-PE (TOPUP) and SBREF files
-    if [ -n "$RUN_LABEL" ]; then
-        TOPUP=$(find "${FMAP_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*epi.nii*" | head -n 1)
-        SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_${RUN_LABEL}_*sbref.nii*" | head -n 1)
-    else
-        TOPUP=$(find "${FMAP_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*epi.nii*" | grep -v "run-" | head -n 1)
-        SBREF=$(find "${FUNC_DIR}" -name "${SUBJECT}_${SESSION}_task-${TASK}_*sbref.nii*" | grep -v "run-" | head -n 1)
-    fi
-    
+    TOPUP=$(find "${FMAP_DIR}" -name "${BOLD_BASE}_*epi.nii*" | head -n 1)
+    SBREF=$(find "${FUNC_DIR}" -name "${BOLD_BASE}_*sbref.nii*" | head -n 1)
+
     # Get number of volumes
-    nvolsTP=$(fslnvols "$TOPUP")
-    nvolsB=$(fslnvols "$BOLD")
+    nvolsTP=$(3dinfo -nv "$TOPUP")
+    nvolsB=$(3dinfo -nv "$BOLD")
     
     echo ""
     echo "Volume information:"
@@ -140,7 +135,7 @@ for BOLD in "${BOLD_FILES[@]}"; do
     echo "Phase encoding parameters:"
     echo "  BOLD PE direction: ${BOLD_PE}"
     echo "  Reverse-PE direction: ${TOPUP_PE}"
-    
+
     # **** AFNI CONVERT  ****
 
     echo ""
@@ -152,7 +147,7 @@ for BOLD in "${BOLD_FILES[@]}"; do
     else
         3dcopy "$BOLD" "${WORK_DIR}/bold+orig"
     fi
-    
+
     # Convert reverse-PE to AFNI format
     echo "Converting reverse-PE to AFNI format..."
     if [[ "$TOPUP" == *.gz ]]; then
@@ -179,7 +174,7 @@ for BOLD in "${BOLD_FILES[@]}"; do
     # -f forward -r reverse -d  
     cd $WORK_DIR   
     # python ./unWarpEPIfloat.py \
-    python "$SCRIPT_DIR/unWarpEPIfloat.py" \
+    python "${PIPELINE_DIR}/functional/unWarpEPIfloat.py" \
         -f "bold+orig${IdxEPI}" \
         -r "reverse+orig${IdxRev}" \
         -d "bold" \
@@ -227,6 +222,7 @@ for BOLD in "${BOLD_FILES[@]}"; do
     # Optional: Clean up working directory
     # Uncomment to remove intermediate files
     # echo "Cleaning up intermediate files..."
+    rm -rf "${WORK_DIR}"
     # rm -f "${WORK_DIR}"/*+orig.*
     # rm -rf "${WORK_DIR}/unWarpOutput_unwarp_out"
     
