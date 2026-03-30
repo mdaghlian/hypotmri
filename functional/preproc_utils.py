@@ -147,6 +147,71 @@ def check_result(result, label: str) -> None:
                 label, result.returncode, result.stderr)
         )
 
+def run_singularity(
+    work_dir: str,
+    sif_image: str,
+    cmd: list,
+    env_vars: dict = None,
+    verbose: bool = True,
+    cwd=None,
+) -> None:
+    """
+    Run *cmd* inside *sif_image* (a .sif file), mounting *work_dir* as /data.
+
+    The container executable is selected from the ``CONTAINER_TYPE``
+    environment variable (e.g. ``"apptainer"`` or ``"singularity"``).
+    Defaults to ``"apptainer"`` if the variable is not set.
+
+    Streams stdout/stderr in real time.  Raises RuntimeError on non-zero exit.
+
+    Parameters
+    ----------
+    work_dir  : Host directory mounted as /data inside the container
+    sif_image : Path to the .sif image file
+    cmd       : Command to run inside the container
+    env_vars  : Environment variables passed via --env flags
+    verbose   : If True, stream output to stdout
+    """
+    container_bin = os.environ.get('CONTAINER_TYPE', 'apptainer')
+
+    env_flags = []
+    for k, v in (env_vars or {}).items():
+        env_flags += ['--env', '{}={}'.format(k, v)]
+
+    proc = subprocess.Popen(
+        [container_bin, 'exec',
+         *env_flags,
+         '--bind', '{}:/data'.format(work_dir),
+         sif_image] + cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+    )
+
+    stdout_lines, stderr_lines = [], []
+
+    def _reader(stream, store, label):
+        for line in stream:
+            store.append(line)
+            if verbose:
+                print('[{} {}] {}'.format(container_bin, label, line),
+                      end='', flush=True)
+
+    t_out = threading.Thread(target=_reader,
+                             args=(proc.stdout, stdout_lines, 'stdout'))
+    t_err = threading.Thread(target=_reader,
+                             args=(proc.stderr, stderr_lines, 'stderr'))
+    t_out.start(); t_err.start()
+    t_out.join();  t_err.join()
+    proc.wait()
+
+    class _Result:
+        returncode = proc.returncode
+        stdout     = ''.join(stdout_lines)
+        stderr     = ''.join(stderr_lines)
+
+    check_result(_Result(), '{} container ({})'.format(container_bin, sif_image))
 
 def run_docker(
     work_dir: str,
@@ -268,10 +333,16 @@ def run_cmd(
             ]
         env = {**os.environ, **(env_vars or {})} if env_vars else None
         run_local(cmd, verbose=verbose, env=env, cwd=cwd)
+    elif docker_image.endswith('.sif'):                          # ← new branch
+        if work_dir is None:
+            raise ValueError('work_dir is required when running via Singularity/Apptainer')
+        run_singularity(work_dir, docker_image, cmd,
+                        env_vars=env_vars, verbose=verbose, cwd=cwd)
     else:
         if work_dir is None:
             raise ValueError('work_dir is required when running via Docker')
-        run_docker(work_dir, docker_image, cmd, env_vars=env_vars, verbose=verbose)
+        run_docker(work_dir, docker_image, cmd,
+                   env_vars=env_vars, verbose=verbose, cwd=cwd)
 
 
 def check_skip(

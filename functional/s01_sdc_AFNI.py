@@ -325,9 +325,8 @@ def process_run(
         else:
             print('    [warn] Warp file not found — copying original SBREF as placeholder.')
             shutil.copy(sbref_path, sdc_sbref)
-
     print('    -> {}'.format(sdc_sbref))
-    shutil.rmtree(work_dir)
+    # shutil.rmtree(work_dir)
     return {
         'sdc_bold':  unwarp_out,
         'sdc_sbref': sdc_sbref,
@@ -340,9 +339,9 @@ def process_run(
 
 def run_pipeline(
     bids_dir: str,
-    output_dir: str,
+    output_file: str,
     subject: str,
-    session: str = 'ses-01',
+    session: str,
     task: str = '',
     afni_docker: str = os.environ.get('AFNI_IMAGE', 'afni/afni_make_build:latest'),
     overwrite: dict = None,
@@ -361,7 +360,7 @@ def run_pipeline(
         ow.update(overwrite)
 
     bids_dir   = str(Path(bids_dir).resolve())
-    output_dir = str(Path(output_dir).resolve())
+    output_dir = str(Path(os.path.join(bids_dir, 'derivatives', output_file)).resolve())
 
     func_dir = os.path.join(bids_dir, subject, session, 'func')
     fmap_dir = os.path.join(bids_dir, subject, session, 'fmap')
@@ -487,7 +486,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     req = p.add_argument_group('required arguments')
     req.add_argument('--bids-dir',   required=True, help='BIDS root directory')
-    req.add_argument('--output-dir', required=True, help='Output derivatives directory')
+    req.add_argument('--output-file', required=True, help='Output derivatives file')
     req.add_argument('--sub',        required=True, help='Subject label (e.g. sub-01)')
     p.add_argument('--ses',          default='ses-01', help='Session label')
     p.add_argument('--task',         default='',       help='Task label')
@@ -511,9 +510,11 @@ def main():
         overwrite = {k: True for k in STEP_KEYS}
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
+    args.sub = "sub-" + args.sub.removeprefix("sub-")
+    args.ses = "ses-" + args.ses.removeprefix("ses-")
     run_pipeline(
         bids_dir=args.bids_dir,
-        output_dir=args.output_dir,
+        output_file=args.output_file,
         subject=args.sub,
         session=args.ses,
         task=args.task,
