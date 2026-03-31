@@ -4,3 +4,4 @@ rsync -avz \
     "ucl-work:~/pipeline/" \
     --exclude-from="${PIPELINE_DIR}/config/hpc_helpers/.rsyncignore" \
     --exclude="*.nii.gz" --exclude="*.nii"
+ssh ucl-work source "~/.bash_profile; set_project.sh ${PROJ_NAME}"

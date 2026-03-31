@@ -177,13 +177,17 @@ def run_singularity(
     env_flags = []
     for k, v in (env_vars or {}).items():
         env_flags += ['--env', '{}={}'.format(k, v)]
+    bind_flags = ['--bind', '{}:/data'.format(work_dir)]
+    if 'FSLICENSE' in os.environ:
+        env_flags += ['--env', "FS_LICENSE='/opt/freesurfer/license.txt'"]
+        bind_flags += ['--bind', '{}:/opt/freesurfer/license.txt'.format(os.environ['FSLICENSE'])]    
     full_sif_image = os.path.join(
         os.environ['SIF_DIR'], sif_image
     )
     proc = subprocess.Popen(
         [container_bin, 'exec',
          *env_flags,
-         '--bind', '{}:/data'.format(work_dir),
+         *bind_flags,
          full_sif_image] + cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -245,12 +249,17 @@ def run_docker(
     env_flags = []
     for k, v in (env_vars or {}).items():
         env_flags += ['-e', '{}={}'.format(k, v)]
-
-    proc = subprocess.Popen(
-        ['docker', 'run', '--rm',
+    vol_flags = ['-v', '{}:/data'.format(work_dir)]
+    if 'FSLICENSE' in os.environ:
+        env_flags += ['-e', "FS_LICENSE=/opt/freesurfer/license.txt"]
+        vol_flags += ['-v', '{}:/opt/freesurfer/license.txt'.format(os.environ['FSLICENSE'])]
+    full_cmd = ['docker', 'run', '--rm',
          *env_flags,
-         '-v', '{}:/data'.format(work_dir),
-         docker_image] + cmd,
+         *vol_flags,
+         docker_image] + cmd
+    print('Running command:\n  {}'.format(' '.join(full_cmd)))
+    proc = subprocess.Popen(
+        full_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

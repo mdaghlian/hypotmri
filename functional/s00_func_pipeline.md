@@ -10,6 +10,9 @@ run susceptibility distortion correction using AFNI. This corrects for the stret
 We call this command - specifying the subject, session and task to run through, and where to put the outputs. Note - you can also specify to run with the AFNI docker, by calling --afni-docker
 #### Run SDC locally 
 ```bash
+# Activate correct python env
+$PYPACKAGE_MANAGER activate preproc
+# Run SDC (using afni docker)
 s01_sdc_AFNI.py --bids-dir $BIDS_DIR \
     --sub <sub-id> --ses <ses-id> \
     --task <task-id> \
@@ -21,7 +24,7 @@ s01_sdc_AFNI.py --bids-dir $BIDS_DIR \
 s01_sdc_hpc.sh --bids-dir $BIDS_DIR \
     --sub <sub-id> --ses <ses-id> \
     --task <task-id> \
-    --output-file s1_AFNI_sdc \ 
+    --output-file s1_AFNI_sdc 
 
 ```
 

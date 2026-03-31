@@ -26,6 +26,7 @@ __pycache__/
 # --- Containers ---
 *.sif
 *.img
+*.tar
 
 # --- Neuroimaging intermediates ---
 <!-- work/ -->
