@@ -177,12 +177,14 @@ def run_singularity(
     env_flags = []
     for k, v in (env_vars or {}).items():
         env_flags += ['--env', '{}={}'.format(k, v)]
-
+    full_sif_image = os.path.join(
+        os.environ['SIF_DIR'], sif_image
+    )
     proc = subprocess.Popen(
         [container_bin, 'exec',
          *env_flags,
          '--bind', '{}:/data'.format(work_dir),
-         sif_image] + cmd,
+         full_sif_image] + cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

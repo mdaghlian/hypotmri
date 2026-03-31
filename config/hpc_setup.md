@@ -69,16 +69,12 @@ Host ucl-gateway
     HostName ssh-gateway.ucl.ac.uk
     User <userid>
     IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-    AddKeysToAgent yes
 
 Host ucl-work
     HostName myriad.rc.ucl.ac.uk
     User <userid>
     ProxyJump ucl-gateway
     IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-    AddKeysToAgent yes
 ```
 
 Replace `<your-ucl-username>` with your UCL user ID (e.g. `ucjvabc`).

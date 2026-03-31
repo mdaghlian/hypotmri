@@ -1,0 +1,8 @@
+matplotlib
+numpy
+seaborn
+scipy
+regex
+PyYAML
+pandas
+tqdm

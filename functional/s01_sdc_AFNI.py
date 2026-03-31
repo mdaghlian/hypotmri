@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+#$ -V
+#$ -cwd
 """
 s01_sdc_AFNI.py
 ===============
@@ -46,7 +48,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from preproc_utils import (
+from cvl_utils.preproc_func import (
     build_output_name,
     make_safe_workdir,
     run_cmd,

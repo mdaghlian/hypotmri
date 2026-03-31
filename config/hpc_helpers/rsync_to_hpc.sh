@@ -166,9 +166,53 @@ fi
 # [4] Derivatives
 if [[ -n "$DERIV" ]]; then
     echo "Syncing derivative: ${DERIV}..."
-    do_rsync \
-        "${BIDS_DIR}/derivatives/${DERIV}/${SUBJECT}/${SESSION}" \
-        "${REMOTE}/derivatives/${DERIV}/${SUBJECT}/${SESSION}"
+
+
+    # [4] Derivatives
+if [[ -n "$DERIV" ]]; then
+
+    if [[ "$DERIV" == "freesurfer" ]]; then
+        echo "Syncing FreeSurfer derivative..."
+
+        # FreeSurfer uses sub-##_ses-## instead of nested folders
+        FS_LABEL="${SUBJECT}_${SESSION}"
+        FS_LOCAL="${BIDS_DIR}/derivatives/freesurfer/${FS_LABEL}"
+        FS_REMOTE="${REMOTE}/derivatives/freesurfer/${FS_LABEL}"
+
+        # Sync the FS directory
+        do_rsync \
+            "${FS_LOCAL}" \
+            "${FS_REMOTE}"
+
+        # --- Create remote symlink sub-XX → sub-XX_ses-YY ---
+        REMOTE_HOST="${REMOTE%%:*}"
+        REMOTE_PATH="${REMOTE#*:}"
+
+        SYMLINK_PATH="${REMOTE_PATH}/derivatives/freesurfer/${SUBJECT}"
+
+        if [[ -z "$DRY_RUN" ]]; then
+            echo "Ensuring remote freesurfer symlink exists..."
+            ssh "$REMOTE_HOST" "cd '${REMOTE_PATH}/derivatives/freesurfer' && \
+                if [[ -L '${SUBJECT}' ]]; then
+                    echo '  Symlink already exists: ${SUBJECT} -> $(readlink ${SUBJECT})';
+                elif [[ -e '${SUBJECT}' ]]; then
+                    echo '  ⚠️  ${SUBJECT} exists and is not a symlink — skipping symlink creation';
+                else
+                    ln -s '${FS_LABEL}' '${SUBJECT}';
+                    echo '  Symlink created: ${SUBJECT} -> ${FS_LABEL}';
+                fi"
+        else
+            echo "  [dry-run] Would ensure remote symlink: ${SUBJECT} → ${FS_LABEL}"
+        fi
+
+    else
+        # Standard derivative
+        echo "Syncing derivative: ${DERIV}..."
+        do_rsync \
+            "${BIDS_DIR}/derivatives/${DERIV}/${SUBJECT}/${SESSION}" \
+            "${REMOTE}/derivatives/${DERIV}/${SUBJECT}/${SESSION}"
+    fi    
+fi
 fi
 
 echo ""

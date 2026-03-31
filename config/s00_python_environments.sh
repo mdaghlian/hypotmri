@@ -87,4 +87,5 @@ $PYPACKAGE_MANAGER run -n $ENV_NAME pip install \
     nilearn==$NILEARN_VERSION
     # antspyx==$ANTS_VERSION \
 
+$PYPACKAGE_MANAGER run -n $ENV_NAME pip install -e $PIPELINE_DIR/cvl_utils
 

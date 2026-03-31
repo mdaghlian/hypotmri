@@ -20,8 +20,8 @@ Skipped steps restore outputs to *work_dir* so downstream steps can proceed.
 Usage example
 -------------
 python s02_coreg.py \\
-    --input-dir    /data/derivatives/sdc/sub-01/ses-01 \\
-    --output-dir   /data/derivatives/moco \\
+    --input-file   s1_sdc_AFNI \\
+    --output-dir   s2_coreg \\
     --sub          sub-01 \\
     --ses          ses-01 \\
     --subjects-dir /data/freesurfer \\
@@ -39,7 +39,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from preproc_utils import (
+from cvl_utils.preproc_func import (
     build_output_name,
     check_skip,
     run_cmd,
@@ -298,7 +298,7 @@ def register_sbref_to_master(
             '-dof',  '6',
             '-cost', 'normcorr',
             '-omat', mat_c,
-            '-out', vol_name,
+            '-out', os.path.join(work_dir, vol_name),
         ],
     )
 
@@ -679,7 +679,7 @@ def process_run(
             work_dir=safe_work_dir,
             docker_image=docker_image,
         )
-
+    shutil.rmtree(work_dir,)
     return {
         'sbref_to_master_mat': sbref_to_master_final,
         'mcf_motion_params':   mcf_par_final,
@@ -696,14 +696,14 @@ def process_run(
 # ---------------------------------------------------------------------------
 
 def run_pipeline(
-    input_dir: str,
-    output_dir: str,
+    bids_dir : str,
+    input_file: str,
+    output_file: str,
     subject: str,
     session: str = 'ses-01',
     subjects_dir: str = None,
     docker_image: str = 'local',
     overwrite: dict = None,
-    append_sub_ses: bool = True,
 ) -> dict:
     """
     Run the full motion correction + registration + surface projection pipeline.
@@ -723,14 +723,15 @@ def run_pipeline(
             )
         ow.update(overwrite)
 
-    input_dir  = str(Path(input_dir).resolve())
-    output_dir = str(Path(output_dir).resolve())
-    if append_sub_ses:
-        subject_input_dir  = os.path.join(input_dir,  subject, session)
-        subject_output_dir = os.path.join(output_dir, subject, session)
-    else:
-        subject_input_dir  = input_dir
-        subject_output_dir = output_dir
+    input_dir  = str(Path(
+        os.path.join(bids_dir, 'derivatives',input_file)
+        ).resolve())
+    output_dir = str(Path(
+        os.path.join(bids_dir, 'derivatives',output_file)
+        ).resolve())
+
+    subject_input_dir  = os.path.join(input_dir,  subject, session)
+    subject_output_dir = os.path.join(output_dir, subject, session)
 
     os.makedirs(subject_output_dir, exist_ok=True)
 
@@ -925,7 +926,9 @@ def run_pipeline(
     print('All {} run(s) completed successfully.'.format(len(bold_files)))
     print('Output directory: {}'.format(subject_output_dir))
     print('=' * 55)
-
+    subj_fs_dst = os.path.join(session_work_dir, 'subjects')
+    if not Path(subj_fs_dst).exists():
+        shutil.rmtree(subj_fs_dst)
     return all_results
 
 
@@ -940,10 +943,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     req = p.add_argument_group('required arguments')
-    req.add_argument('--input-dir',  required=True,
-                     help='Directory containing SDC-corrected BOLD + SBREF files')
-    req.add_argument('--output-dir', required=True,
-                     help='Output derivatives directory')
+    req.add_argument('--bids-dir', required=True,
+                     help='BIDS directory')
+    req.add_argument('--input-file',  required=True,
+                     help='Input directory containing SDC-corrected BOLD + SBREF files')
+    req.add_argument('--output-file', required=True,
+                     help='Output derivatives file')
     req.add_argument('--sub',        required=True,
                      help='Subject label (e.g. sub-01)')
 
@@ -958,7 +963,6 @@ def _build_parser() -> argparse.ArgumentParser:
         raise argparse.ArgumentTypeError(
             "Boolean value expected, got '{}'".format(v))
 
-    p.add_argument('--append-sub-ses', default=True, type=str2bool)
     p.add_argument('--subjects-dir', default=None,
                    help='FreeSurfer SUBJECTS_DIR (default: $SUBJECTS_DIR)')
     p.add_argument('--docker',
@@ -994,15 +998,16 @@ def main():
         overwrite = {k: True for k in STEP_KEYS}
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
-
+    args.sub = "sub-" + args.sub.removeprefix("sub-")
+    args.ses = "ses-" + args.ses.removeprefix("ses-")
     run_pipeline(
-        input_dir=args.input_dir,
-        output_dir=args.output_dir,
+        bids_dir=args.bids_dir,
+        input_file=args.input_file,
+        output_file=args.output_file,
         subject=args.sub,
         session=args.ses,
         subjects_dir=args.subjects_dir,
         docker_image=args.docker,
-        append_sub_ses=args.append_sub_ses,
         overwrite=overwrite,
     )
 

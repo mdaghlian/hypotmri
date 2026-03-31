@@ -1,31 +1,47 @@
 # Anatomical pipeline: 
-Assumes that you have already run the setup
+Assumes that you have already followed the setup process ([local_setup.md](../config/local_setup.md))
 
-Make sure you have updated project specific information in you /config/config_pipeline.sh file (i.e., correct paths etc)
+Make sure you have updated project specific information in you /config/project_XXX.sh file (i.e., correct paths etc). Before running analyses make sure the correct project is set:
+
+```bash
+source set_project.sh XXX # (your project name)
+```
 
 ## [1] fmriprep_anat_only
+Runs fmriprep anatomy only, which, also does freesurfer as well
 - pass the BIDS directory; subject id; & name of the session with the anatomy (T1w image) inside 
-- This script will create a "fake" fmriprep session (fprep) to put all of our preprocessed stuff inside later
-- For now just doing the anatomy
+- This script will create a separate "FPREP_BIDS" folder inside derivatives. The reason for this is that we have our own preprocessing steps we want to run outside of fmriprep - by splitting it up like this, we can make a clean distinction between fmriprep-run processes & our own.
 
+#### Run locally:
 ```bash
-BIDS_DIR="/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/"
-bash s01_fmriprep_anat_only.sh --bids-dir ${BIDS_DIR} --sub sub-hp01 --ses ses-01
+s01_fmriprep_anat_only.sh --bids-dir ${BIDS_DIR} --sub <sub-id> --ses <ses-id>
 ```
-to submit to the cluster with qsub run 
+#### Run on HPC
+Assumes you have already follwed the setup instructions in [hpc_setup.md](../config/hpc_setup.md)) 
 ```bash
-bash s01_hpc_submit.sh --bids-dir ${BIDS_DIR} --sub sub-hp01 --ses ses-01
+s01_hpc_submit.sh --bids-dir ${BIDS_DIR} --sub <sub-id> --ses <ses-id>
+```
+To pull the freesurfer output afterwards to your local pc run:
+```bash
+rsync_from_hpc.sh --sub <sub-id> --ses <ses-id> --deriv freesurfer
 ```
 
-*TODO* - add a QC here
+#### Qualtiy Checks (local only)
+```bash
+# Open freeview with anatomy + wm + gm boundaryies
+qc_surfaces.sh <sub-id> 
+
+# Create movie (in $SUBJECTS_DIR/<sub-id>/movie)
+# moving through the saggital view, with wm + gm boundaries
+# good for spotting saggital sinus erros 
+qc_surfaces_movie.sh <sub-id>
+```
 
 ## [2] benson atlas
 Step [1] will create the subject specific freesurfer folder. Now we use this to create the benson atlas
 ```bash
 conda activate b14 # python environment we need
-BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
-SUBJECTS_DIR=$BIDS_DIR/derivatives/freesurfer
-python s02_b14atlas.py sub-hp01 --SUBJECTS_DIR $SUBJECTS_DIR
+s02_b14atlas.py <sub-id> --SUBJECTS_DIR $SUBJECTS_DIR
 ```
 This will add benson atlas to your freesurfer folder and add the ROIS to your label folder 
 
@@ -36,15 +52,12 @@ Makes cuts to your inflated freesurfer surface so that they can be easily used a
 
 ```bash
 conda activate autoflat
-BIDS_DIR=/Users/marcusdaghlian/projects/dp-clean-link/240522NG/hypot/
-SUBJECTS_DIR=$BIDS_DIR/derivatives/freesurfer
-# run on a freesurfer subjects
-autoflatten $SUBJECTS_DIR/sub-hp01
+autoflatten $SUBJECTS_DIR/<sub-id>
 ```
 ## [4] pycortex 
 Takes the freesurfer + autoflatten outputs and makes a subject specific pycortex directory. this can be used for making quick flatmaps. It also automatically imports the freesurfer ROIs on top. 
 
 ```bash
 conda activate pctx
-python s04_pycortex.py sub-hp04 --fsdir $SUBJECTS_DIR
+s04_pycortex.py <sub-id> --fsdir $SUBJECTS_DIR
 ```

@@ -9,3 +9,5 @@ license.txt
 **/.DS_Store
 .vscode*
 /config/project_*.sh
+*.egg-info/
+*__pycache__/

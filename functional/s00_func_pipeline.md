@@ -7,14 +7,24 @@ source set_project.sh <project-name>
 ## [1] Susceptibility distortion correction - (afni)
 run susceptibility distortion correction using AFNI. This corrects for the stretching/squishing of BOLD images, that occurs along the phase-encoding axis. AFNI does this by comparing an image acquired in one phase-encoding direction with another in the opposite direction. 
 
-We call this command - specifying the subject, session and task to run through, and where to put the outputs. Note - you can also specify to run with the AFNI docker, by calling --afni-docker with 
+We call this command - specifying the subject, session and task to run through, and where to put the outputs. Note - you can also specify to run with the AFNI docker, by calling --afni-docker
+#### Run SDC locally 
 ```bash
 s01_sdc_AFNI.py --bids-dir $BIDS_DIR \
-    --sub hp01 --ses 01 --task pRFLE 
-    --output-dir $BIDS_DIR/derivatives/s1_AFNI_sdc \ 
+    --sub <sub-id> --ses <ses-id> \
+    --task <task-id> \
+    --output-file s1_AFNI_sdc \ 
     --afni-docker $AFNI_IMAGE
+```
+#### Run SDC on the HPC
+```bash
+s01_sdc_hpc.sh --bids-dir $BIDS_DIR \
+    --sub <sub-id> --ses <ses-id> \
+    --task <task-id> \
+    --output-file s1_AFNI_sdc \ 
 
 ```
+
 
 ## [2] Motion correction (fsl)
 Next, we can run motion correction for a whole session using fsl. Motion correction, coregistration uses the FreeSurfer T1, and surface projection, so freesurfer must have already been run before this step.

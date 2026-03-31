@@ -37,10 +37,10 @@ export SIF_DIR="${HOME}/Scratch/sifs/"
 [[ ! -d "$SIF_DIR" ]] && mkdir -p "$SIF_DIR"
 export SIF_DIR_LOCAL="${PIPELINE_DIR}/siffiles"
 [[ ! -d "$SIF_DIR_LOCAL" ]] && mkdir -p "$SIF_DIR_LOCAL"
-export NEURODOCKER_SIF="${SIF_DIR}/neurodocker-${NEURODOCKER_VERSION}.sif"
-export FPREP_SIF="${SIF_DIR}/fmriprep-${FPREP_VERSION}.sif"
-export AFNI_SIF="${SIF_DIR}/afni-26.0.07.sif"
-export NIGHRES_SIF="${SIF_DIR}/nighres-latest.sif"
+export NEURODOCKER_SIF="neurodocker-${NEURODOCKER_VERSION}.sif"
+export FPREP_SIF="fmriprep-${FPREP_VERSION}.sif"
+export AFNI_SIF="afni-26.0.07.sif"
+export NIGHRES_SIF="nighres-latest.sif"
 
 
 # --- Conda environments ---
