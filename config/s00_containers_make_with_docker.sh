@@ -23,22 +23,28 @@ docker run --rm "${NEURODOCKER_IMAGE}" \
     > "${DOCKFILE_DIR}/fsl_freesurfer.dockerfile"
 # [2] build the docker image locally from the generated Dockerfile
 docker build \
-    --platform linux/amd64 \
+    --platform linux/arm64 \
     -f "${DOCKFILE_DIR}/fsl_freesurfer.dockerfile" \
     -t "${FSL_FREESURFER_IMAGE}" \
     "${PIPELINE_DIR}"  
 
-# [3] Save Docker image to tar
-docker save "${FSL_FREESURFER_IMAGE}" \
-    -o "${SIF_DIR_LOCAL}/fsl_freesurfer.tar"
+# Try again... amd64 FOR CLUSTER
+docker run --privileged --platform linux/amd64 \
+    --rm ${NEURODOCKER_IMAGE} \
+    generate singularity \
+    --pkg-manager apt \
+    --base-image debian:bullseye-slim \
+    --yes \
+    --install curl ca-certificates bc perl tar gzip \
+    --freesurfer version=${FREESURFER_VERSION} \
+    --fsl version=${FSL_VERSION} \
+    --env FS_LICENSE=/opt/freesurfer/license.txt \
+    > ${DOCKFILE_DIR}/fsl_freesurfer.def
 
-# [4] Convert tar → .sif via Apptainer
-docker run --privileged --rm \
+docker run --privileged --platform linux/amd64 --rm \
+    -v "${DOCKFILE_DIR}":/def \
     -v "${SIF_DIR_LOCAL}":/data \
     ghcr.io/apptainer/apptainer:latest \
     apptainer build \
         /data/${FSL_FREESURFER_SIF} \
-        docker-archive:///data/fsl_freesurfer.tar
-
-# [5] Cleanup tar (optional)
-rm "${SIF_DIR_LOCAL}/fsl_freesurfer.tar"
+        /def/fsl_freesurfer.def

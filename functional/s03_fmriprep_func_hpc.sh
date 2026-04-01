@@ -122,12 +122,13 @@ echo "-------------------------------------------------------"
 QSUB_CMD="source ~/.bash_profile; \
     source set_project.sh ${PROJ_NAME}; \
     mkdir -p '${REMOTE_LOG_DIR}'; \
+    conda activate preproc; \
     qsub -V \
         -N  '${JOB_NAME}' \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
-        -l  h_rt=12:00:00 \
-        -l  mem=8G \
+        -l  h_rt=00:02:00 \
+        -l  mem=1G \
         -pe smp 1 \
         -j  n \
         ${RUNNER_SCRIPT}"

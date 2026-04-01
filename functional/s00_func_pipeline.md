@@ -42,18 +42,27 @@ Coregistration strategy
 ```bash
 $PYPACKAGE_MANAGER activate preproc
 s02_coreg.py --sub hp01 --ses 01 \
-    --input-dir $BIDS_DIR/s1_AFNI_sdc \
-    --output-dir $BIDS_DIR/s2_coreg \
-    --subjects-dir $SUBJECTS_DIR
+    --input-file s1_AFNI_sdc \
+    --output-file s2_coreg \
+    --bids-dir $BIDS_DIR
 ```
-
-For fsl
-```bash 
-
-python s01_sdc_fsl.py --bids-dir $BIDS_DIR --output-dir $BIDS_DIR/derivatives/sf1_sdc_fsl_test --sub sub-hp01 --ses ses-01 --task pRFLE 
-```
-
-For afni
+On the cluster
 ```bash
-python s01_sdc_AFNI.py --bids-dir $BIDS_DIR --output-dir $BIDS_DIR/derivatives/sf1_sdcAFNI_test --sub sub-hp01 --ses ses-01 --task pRFLE 
+s02_coreg_hpc.sh --sub hp01 --ses 01 \
+    --input-file s1_AFNI_sdc \
+    --output-file s2_coreg \
+    --bids-dir $BIDS_DIR
+```
+
+## [3] fmriprep (for confounds)
+Locally 
+```bash
+$PYPACKAGE_MANAGER activate preproc
+s03_fmriprep_func.sh --sub hp01 --ses 01 \
+    --input-file s2_coreg --bids-dir $BIDS_DIR
+```
+On the cluster
+```bash
+s03_fmriprep_func_hpc.sh --sub hp01 --ses 01 \
+    --input-file s2_coreg --bids-dir $BIDS_DIR
 ```

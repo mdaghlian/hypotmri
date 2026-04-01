@@ -83,7 +83,7 @@ fi
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
-echo "Running MOC + COREG"
+echo "Running MOCO + COREG"
 echo "-------------------------------------------------------"
 if [[ "${PC_LOCATION}" == "local" ]]; then
     echo "  Running from:         local"
@@ -113,8 +113,6 @@ RUNNER_SCRIPT="~/pipeline/functional/s02_coreg.py \
     --ses         '${SESSION}' \
     --docker      '${FSL_FREESURFER_SIF}'"
 
-echo $RUNNER_SCRIPT
-exit 1
 echo "-------------------------------------------------------"
 echo "Submitting COREGISTRATION job"
 echo "  Subject:  $SUBJECT"
@@ -130,9 +128,9 @@ QSUB_CMD="source ~/.bash_profile; \
         -N  '${JOB_NAME}' \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
-        -l  h_rt=0:05:00 \
+        -l  h_rt=2:00:00 \
         -l  mem=2G \
-        -pe smp 1 \
+        -pe smp 4 \
         -j  n \
         ${RUNNER_SCRIPT}"
 

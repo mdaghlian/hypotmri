@@ -1,24 +1,24 @@
 #!/bin/bash
 set -e
-
 # --- Usage ---
 usage() {
     echo "Usage: $0 --sub <ID> [--ses <ID>] [--raw] [--raw-anat] [--deriv <name>] [--bids-dir <path>] [--remote <path>]"
     echo ""
     echo "Required Arguments:"
-    echo "  --sub         Subject label (e.g., sub-01)"
-    echo "  --ses         Session label (e.g., ses-01)"
+    echo "  --sub              Subject label (e.g., sub-01)"
+    echo "  --ses              Session label (e.g., ses-01)"
     echo ""
     echo "One of:"
-    echo "  --raw         Sync rawdata for subject/session"
-    echo "  --raw-anat    Sync only the anat/ folder for subject/session"
-    echo "  --deriv       Derivative name to sync (e.g., fmriprep, freesurfer)"
+    echo "  --raw              Sync rawdata for subject/session"
+    echo "  --raw-anat         Sync only the anat/ folder for subject/session"
+    echo "  --deriv            Derivative name to sync (e.g., fmriprep, freesurfer)"
     echo ""
     echo "Optional Arguments (fall back to environment variables):"
-    echo "  --bids-dir    Local BIDS dir  (default: \$BIDS_DIR)"
-    echo "  --remote      Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
-    echo "  --dry-run     Show what would be transferred without doing it"
-    echo "  --help        Display this help message"
+    echo "  --bids-dir         Local BIDS dir  (default: \$BIDS_DIR)"
+    echo "  --remote           Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
+    echo "  --dry-run          Show what would be transferred without doing it"
+    echo "  --include-pattern  Only sync files matching pattern (e.g., '*_bold.nii.gz')"
+    echo "  --help             Display this help message"
     exit 1
 }
 
@@ -31,19 +31,21 @@ SESSION=""
 SUBJECT=""
 ARG_BIDS_DIR=""
 ARG_REMOTE=""
+INCLUDE_PATTERN=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids-dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
-        --remote)     ARG_REMOTE="$2";   shift 2 ;;
-        --sub)        SUBJECT="$2";      shift 2 ;;
-        --ses)        SESSION="$2";      shift 2 ;;
-        --raw)        RAW=1;             shift   ;;
-        --raw-anat)   RAW_ANAT=1;        shift   ;;
-        --deriv)      DERIV="$2";        shift 2 ;;
-        --dry-run)    DRY_RUN="--dry-run"; shift ;;
-        --help)       usage ;;
-        *)            echo "Unknown argument: $1"; usage ;;
+        --bids-dir)        ARG_BIDS_DIR="$2";    shift 2 ;;
+        --remote)          ARG_REMOTE="$2";       shift 2 ;;
+        --sub)             SUBJECT="$2";          shift 2 ;;
+        --ses)             SESSION="$2";          shift 2 ;;
+        --raw)             RAW=1;                 shift   ;;
+        --raw-anat)        RAW_ANAT=1;            shift   ;;
+        --deriv)           DERIV="$2";            shift 2 ;;
+        --dry-run)         DRY_RUN="--dry-run";   shift   ;;
+        --include-pattern) INCLUDE_PATTERN="$2";  shift 2 ;;
+        --help)            usage ;;
+        *)                 echo "Unknown argument: $1"; usage ;;
     esac
 done
 
@@ -73,6 +75,16 @@ else
     EXCLUDE_OPT="--exclude-from=${EXCLUDE_FILE}"
 fi
 
+# --- Build include option ---
+INCLUDE_OPT=()
+if [[ -n "$INCLUDE_PATTERN" ]]; then
+    INCLUDE_OPT=(
+        --include='*/'             # descend into all subdirectories
+        --include="$INCLUDE_PATTERN"  # include matching files
+        --exclude='*'             # exclude everything else
+    )
+fi
+
 RSYNC_OPTS="-avz --progress --ignore-existing $DRY_RUN $EXCLUDE_OPT"
 
 # --- Helper ---
@@ -94,11 +106,11 @@ do_rsync() {
 
     # Files that would transfer without --ignore-existing
     local all_files
-    all_files=$(rsync -az --dry-run --out-format="%f" "${src}/" "${dst}/" 2>/dev/null || true)
+    all_files=$(rsync -az --dry-run --out-format="%f" $INCLUDE_OPT "${src}/" "${dst}/" 2>/dev/null || true)
 
     # Files that would transfer with --ignore-existing (i.e. genuinely new)
     local new_files
-    new_files=$(rsync -az --dry-run --ignore-existing --out-format="%f" "${src}/" "${dst}/" 2>/dev/null || true)
+    new_files=$(rsync -az --dry-run --ignore-existing --out-format="%f" $INCLUDE_OPT "${src}/" "${dst}/" 2>/dev/null || true)
 
     # Anything in all_files but not in new_files would have been overwritten
     local conflicts
@@ -113,21 +125,22 @@ do_rsync() {
         echo ""
     fi
 
-    rsync $RSYNC_OPTS "${src}/" "${dst}/"
+    rsync $RSYNC_OPTS "${INCLUDE_OPT[@]}" "${src}/" "${dst}/"
 }
 
 # --- Status ---
 echo "-------------------------------------------------------"
 echo "Rsyncing BIDS data to cluster"
 echo "-------------------------------------------------------"
-echo "  Local:    $BIDS_DIR"
-echo "  Remote:   $REMOTE"
-echo "  Subject:  $SUBJECT"
-echo "  Session:  $SESSION"
-echo "  Raw:      $([ $RAW -eq 1 ] && echo yes || echo no)"
-echo "  Raw anat: $([ $RAW_ANAT -eq 1 ] && echo yes || echo no)"
-echo "  Deriv:    ${DERIV:-none}"
-echo "  Dry run:  ${DRY_RUN:+yes}"
+echo "  Local:           $BIDS_DIR"
+echo "  Remote:          $REMOTE"
+echo "  Subject:         $SUBJECT"
+echo "  Session:         $SESSION"
+echo "  Raw:             $([ $RAW -eq 1 ] && echo yes || echo no)"
+echo "  Raw anat:        $([ $RAW_ANAT -eq 1 ] && echo yes || echo no)"
+echo "  Deriv:           ${DERIV:-none}"
+echo "  Dry run:         ${DRY_RUN:+yes}"
+echo "  Include pattern: ${INCLUDE_PATTERN:-none}"
 echo "-------------------------------------------------------"
 
 # [1] Top-level BIDS metadata
@@ -165,21 +178,13 @@ fi
 
 # [4] Derivatives
 if [[ -n "$DERIV" ]]; then
-    echo "Syncing derivative: ${DERIV}..."
-
-
-    # [4] Derivatives
-if [[ -n "$DERIV" ]]; then
-
     if [[ "$DERIV" == "freesurfer" ]]; then
         echo "Syncing FreeSurfer derivative..."
-
         # FreeSurfer uses sub-##_ses-## instead of nested folders
         FS_LABEL="${SUBJECT}_${SESSION}"
         FS_LOCAL="${BIDS_DIR}/derivatives/freesurfer/${FS_LABEL}"
         FS_REMOTE="${REMOTE}/derivatives/freesurfer/${FS_LABEL}"
 
-        # Sync the FS directory
         do_rsync \
             "${FS_LOCAL}" \
             "${FS_REMOTE}"
@@ -187,8 +192,6 @@ if [[ -n "$DERIV" ]]; then
         # --- Create remote symlink sub-XX → sub-XX_ses-YY ---
         REMOTE_HOST="${REMOTE%%:*}"
         REMOTE_PATH="${REMOTE#*:}"
-
-        SYMLINK_PATH="${REMOTE_PATH}/derivatives/freesurfer/${SUBJECT}"
 
         if [[ -z "$DRY_RUN" ]]; then
             echo "Ensuring remote freesurfer symlink exists..."
@@ -204,15 +207,13 @@ if [[ -n "$DERIV" ]]; then
         else
             echo "  [dry-run] Would ensure remote symlink: ${SUBJECT} → ${FS_LABEL}"
         fi
-
     else
         # Standard derivative
         echo "Syncing derivative: ${DERIV}..."
         do_rsync \
             "${BIDS_DIR}/derivatives/${DERIV}/${SUBJECT}/${SESSION}" \
             "${REMOTE}/derivatives/${DERIV}/${SUBJECT}/${SESSION}"
-    fi    
-fi
+    fi
 fi
 
 echo ""

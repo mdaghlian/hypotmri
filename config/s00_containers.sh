@@ -32,7 +32,8 @@ case "${CONTAINER_TYPE}" in
         # But we can just download them from dropbox for now, to avoid the time-consuming process of building them locally from docker images
         curl -L -o ${SIF_DIR}/${FPREP_SIF} "https://www.dropbox.com/scl/fi/33ipqt6msvupl0p6opj6k/fmriprep-25.2.4.sif?rlkey=gyiqi5k4aom7iay7t3c1li8wr&st=c40hy2mb&dl=1"
         curl -L -o ${SIF_DIR}/${AFNI_SIF} "https://www.dropbox.com/scl/fi/2wswmq7q6953chghjva2c/afni-26.0.07.sif?rlkey=nh4qmvnrq0t2qxs38nefmih81&st=ijp0g5lp&dl=1"
-        curl -L -o ${SIF_DIR}/${FSL_FREESURFER_SIF} "https://www.dropbox.com/scl/fi/8881ljpt04zjjftdg2oyq/fsl_freesurfer.sif?rlkey=37dn7351q49yo8mg6cipx5ym7&st=308prnx4&dl=1"
+        curl -L -o ${SIF_DIR}/${FSL_FREESURFER_SIF} "https://www.dropbox.com/scl/fi/edpqrbjo5vkhftijkto9w/fsl_freesurfer.sif?rlkey=sp3oemeiiad61jni2eu0zfqdk&st=msf02shc&dl=1"
+        
         ;;
     *)
         echo "Error: unknown CONTAINER_TYPE '${CONTAINER_TYPE}'. Set to 'docker', 'apptainer', or 'singularity'." >&2

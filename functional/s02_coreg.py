@@ -927,7 +927,7 @@ def run_pipeline(
     print('Output directory: {}'.format(subject_output_dir))
     print('=' * 55)
     subj_fs_dst = os.path.join(session_work_dir, 'subjects')
-    if not Path(subj_fs_dst).exists():
+    if Path(subj_fs_dst).exists():
         shutil.rmtree(subj_fs_dst)
     return all_results
 
