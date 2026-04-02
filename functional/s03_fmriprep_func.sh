@@ -106,7 +106,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
     echo "Processing run: ${clean_run_name}"
     FPREP_BOLD="${FPREP_FUNC_DIR}/${clean_run_name}"
     FPREP_JSON="${FPREP_FUNC_DIR}/${clean_run_name%.nii.gz}.json"
-    BOLD_TR=$(fslval $BOLD_FILE pixdim4)
+    BOLD_TR=$(conda run -n preproc fslval "$BOLD_FILE" pixdim4)
 cat <<EOF > "$FPREP_JSON"
 {
   "RepetitionTime": $BOLD_TR,

@@ -109,6 +109,7 @@ RUNNER_SCRIPT="~/pipeline/functional/s03_fmriprep_func.sh \
     --sub      '${SUBJECT}' \
     --ses      '${SESSION}' \
     --input-file '${INPUT_FILE}'"
+echo $RUNNER_SCRIPT
 # Make sure output dir exists 
 [[ ! -d "${BIDS_DIR}/derivatives/fmriprep" ]] && mkdir -p "${BIDS_DIR}/derivatives/fmriprep"
 
@@ -127,12 +128,13 @@ QSUB_CMD="source ~/.bash_profile; \
         -N  '${JOB_NAME}' \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
-        -l  h_rt=00:02:00 \
-        -l  mem=1G \
-        -pe smp 1 \
+        -l  h_rt=10:00:00 \
+        -l  mem=2G \
+        -pe smp 4 \
         -j  n \
         ${RUNNER_SCRIPT}"
 echo "$QSUB_CMD"
+
 if [[ "${PC_LOCATION}" == "local" ]]; then
     JOB_ID=$(ssh "$REMOTE_HOST" "$QSUB_CMD" | awk '{print $3}')
 else
