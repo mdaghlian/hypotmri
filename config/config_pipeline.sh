@@ -18,7 +18,7 @@ export FREESURFER_VERSION="7.3.2"
 export FSLICENSE="${PIPELINE_DIR}/config/license.txt"
 export FSL_VERSION="6.0.7.19"
 export FSLDIR="${HOME}/.conda/envs/preproc/"
-
+export FSLOUTPUTTYPE="NIFTI_GZ"
 # --- CONTAINER SETTINGS ---
 # -> docker 
 export CONTAINER_TYPE="docker" # or singularity -> replace "docker" with "singularity "
@@ -61,3 +61,4 @@ export PYCTX_VERSION="1.3.0"
 
 # --- PROJECT INFORMATION ---
 source $PIPELINE_DIR/config/project_current.sh
+source $PIPELINE_DIR/config/set_remote_paths.sh

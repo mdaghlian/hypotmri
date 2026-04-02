@@ -140,13 +140,12 @@ nano ~/.bash_profile
 ```
 Go down to the bottom and copy paste the following
 ```bash
-export PIPELINE_DIR="/home/<ucl-id>/pipeline"
-source "${PIPELINE_DIR}/config/config_pipeline.sh"
-
 # Set the following variables to be cluster friendly (i.e., not docker)
 export PC_LOCATION="HPC"
 export CONTAINER_TYPE="apptainer" # docker or singularity
 export PYPACKAGE_MANAGER="conda"
+export PIPELINE_DIR="/home/<ucl-id>/pipeline"
+source "${PIPELINE_DIR}/config/config_pipeline.sh"
 
 ml apptainer/1.2.4-1
 # Apptainer build and cache directories
