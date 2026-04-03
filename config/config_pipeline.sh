@@ -17,7 +17,7 @@ export PATH="${PIPELINE_DIR}/functional:${PATH}"
 export FREESURFER_VERSION="7.3.2"
 export FSLICENSE="${PIPELINE_DIR}/config/license.txt"
 export FSL_VERSION="6.0.7.19"
-export FSLDIR="${HOME}/.conda/envs/preproc/"
+export FSLDIR="${CONDA_PREFIX}/envs/preproc" #"${HOME}/.conda/envs/preproc/"
 export FSLOUTPUTTYPE="NIFTI_GZ"
 # --- CONTAINER SETTINGS ---
 # -> docker 

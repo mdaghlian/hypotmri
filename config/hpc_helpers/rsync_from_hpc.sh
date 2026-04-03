@@ -6,17 +6,18 @@ usage() {
     echo "Usage: $0 --sub <ID> [--ses <ID>] [--deriv <name>] [--bids-dir <path>] [--remote <path>]"
     echo ""
     echo "Required Arguments:"
-    echo "  --sub         Subject label (e.g., sub-01)"
-    echo "  --ses         Session label (e.g., ses-01)"
+    echo "  --sub              Subject label (e.g., sub-01)"
+    echo "  --ses              Session label (e.g., ses-01)"
     echo ""
     echo "One of:"
-    echo "  --deriv       Derivative name to sync (e.g., fmriprep, freesurfer)"
+    echo "  --deriv            Derivative name to sync (e.g., fmriprep, freesurfer)"
     echo ""
     echo "Optional Arguments (fall back to environment variables):"
-    echo "  --bids-dir    Local BIDS dir  (default: \$BIDS_DIR)"
-    echo "  --remote      Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
-    echo "  --dry-run     Show what would be transferred without doing it"
-    echo "  --help        Display this help message"
+    echo "  --bids-dir         Local BIDS dir  (default: \$BIDS_DIR)"
+    echo "  --remote           Remote BIDS dir (default: \$REMOTE_BIDS_DIR)"
+    echo "  --dry-run          Show what would be transferred without doing it"
+    echo "  --include-pattern  Only sync files matching pattern (e.g., '*_bold.nii.gz')"
+    echo "  --help             Display this help message"
     exit 1
 }
 
@@ -27,17 +28,19 @@ SESSION=""
 SUBJECT=""
 ARG_BIDS_DIR=""
 ARG_REMOTE=""
+INCLUDE_PATTERN=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --bids-dir)   ARG_BIDS_DIR="$2"; shift 2 ;;
-        --remote)     ARG_REMOTE="$2";   shift 2 ;;
-        --sub)        SUBJECT="$2";      shift 2 ;;
-        --ses)        SESSION="$2";      shift 2 ;;
-        --deriv)      DERIV="$2";        shift 2 ;;
-        --dry-run)    DRY_RUN="--dry-run"; shift ;;
-        --help)       usage ;;
-        *)            echo "Unknown argument: $1"; usage ;;
+        --bids-dir)        ARG_BIDS_DIR="$2";    shift 2 ;;
+        --remote)          ARG_REMOTE="$2";       shift 2 ;;
+        --sub)             SUBJECT="$2";          shift 2 ;;
+        --ses)             SESSION="$2";          shift 2 ;;
+        --deriv)           DERIV="$2";            shift 2 ;;
+        --dry-run)         DRY_RUN="--dry-run";   shift   ;;
+        --include-pattern) INCLUDE_PATTERN="$2";  shift 2 ;;
+        --help)            usage ;;
+        *)                 echo "Unknown argument: $1"; usage ;;
     esac
 done
 
@@ -66,6 +69,16 @@ else
     EXCLUDE_OPT="--exclude-from=${EXCLUDE_FILE}"
 fi
 
+# --- Build include option ---
+INCLUDE_OPT=()
+if [[ -n "$INCLUDE_PATTERN" ]]; then
+    INCLUDE_OPT=(
+        --include='*/'
+        --include="$INCLUDE_PATTERN"
+        --exclude='*'
+    )
+fi
+
 RSYNC_OPTS="-avz --progress --ignore-existing $DRY_RUN $EXCLUDE_OPT"
 
 # --- Helper ---
@@ -80,11 +93,11 @@ do_rsync() {
 
     # Files that would transfer without --ignore-existing
     local all_files
-    all_files=$(rsync -az --dry-run --out-format="%f" "${src}/" "${dst}/" 2>/dev/null || true)
+    all_files=$(rsync -az --dry-run --out-format="%f" "${INCLUDE_OPT[@]}" "${src}/" "${dst}/" 2>/dev/null || true)
 
     # Files that would transfer with --ignore-existing (i.e. genuinely new)
     local new_files
-    new_files=$(rsync -az --dry-run --ignore-existing --out-format="%f" "${src}/" "${dst}/" 2>/dev/null || true)
+    new_files=$(rsync -az --dry-run --ignore-existing --out-format="%f" "${INCLUDE_OPT[@]}" "${src}/" "${dst}/" 2>/dev/null || true)
 
     # Anything in all_files but not in new_files would have been overwritten
     local conflicts
@@ -99,19 +112,20 @@ do_rsync() {
         echo ""
     fi
 
-    rsync $RSYNC_OPTS "${src}/" "${dst}/"
+    rsync $RSYNC_OPTS "${INCLUDE_OPT[@]}" "${src}/" "${dst}/"
 }
 
 # --- Status ---
 echo "-------------------------------------------------------"
 echo "Rsyncing BIDS data from cluster"
 echo "-------------------------------------------------------"
-echo "  Remote:   $REMOTE"
-echo "  Local:    $BIDS_DIR"
-echo "  Subject:  $SUBJECT"
-echo "  Session:  $SESSION"
-echo "  Deriv:    ${DERIV}"
-echo "  Dry run:  ${DRY_RUN:+yes}"
+echo "  Remote:          $REMOTE"
+echo "  Local:           $BIDS_DIR"
+echo "  Subject:         $SUBJECT"
+echo "  Session:         $SESSION"
+echo "  Deriv:           ${DERIV}"
+echo "  Dry run:         ${DRY_RUN:+yes}"
+echo "  Include pattern: ${INCLUDE_PATTERN:-none}"
 echo "-------------------------------------------------------"
 
 # [1] Derivatives

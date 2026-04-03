@@ -25,7 +25,8 @@ install_b14() {
     $PYPACKAGE_MANAGER create -n $ENV_NAME python=$PYTHON_FOR_PIPELINE -y
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install \
         nibabel==$NIBABEL_VERSION \
-        neuropythy==$NEUROPYTHY_VERSION
+        neuropythy==$NEUROPYTHY_VERSION \
+        nitime
     echo "Done! Activate with: $PYPACKAGE_MANAGER activate $ENV_NAME"
 }
 
@@ -73,12 +74,13 @@ install_preproc() {
 
     FSL_ENV_URL="https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/releases/fsl-${FSL_VERSION}_${FSL_PLATFORM}.yml"
     curl -L -o fsl_env.yml $FSL_ENV_URL
-    $PYPACKAGE_MANAGER env create -n $ENV_NAME -f fsl_env.yml -y
+    $PYPACKAGE_MANAGER env create -n $ENV_NAME --file=fsl_env.yml -y
     rm fsl_env.yml
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install \
         nibabel==$NIBABEL_VERSION \
-        nilearn==$NILEARN_VERSION
-        # antspyx==$ANTS_VERSION \
+        nilearn==$NILEARN_VERSION \
+        nipype==$NIPYPE_VERSION 
+        # antspyx==$ANTS_VERSION
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install -e $PIPELINE_DIR/cvl_utils
     echo "Done! Activate with: $PYPACKAGE_MANAGER activate $ENV_NAME"
 }

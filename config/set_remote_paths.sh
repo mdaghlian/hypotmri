@@ -6,6 +6,7 @@ if [[ "${PC_LOCATION}" != "local" ]]; then
   export BIDS_DIR="${REMOTE_BIDS_DIR_PATH}"
   export SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
   export CONTAINER_TYPE="apptainer"
+  export PYPACKAGE_MANAGER="conda"
 fi
 echo "BIDS_DIR=${BIDS_DIR}"
 echo "SUBJECTS_DIR=${SUBJECTS_DIR}"

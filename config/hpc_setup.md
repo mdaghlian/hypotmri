@@ -5,16 +5,17 @@ To get request access go here: [https://www.rc.ucl.ac.uk/docs/Account_Services/#
 
 General information [https://www.rc.ucl.ac.uk/docs/Clusters/]
 
-Assuming you have read some of the above and got the general gist, gotMyriad is UCL's primary HPC cluster. Access is via SSH through a gateway node (`ssh-gateway.ucl.ac.uk`), since Myriad itself isn't directly reachable from outside UCL's network. The `ProxyJump` directive in the SSH config handles this automatically so you only need one command to log in.
+Assuming you have read some of the above and got the general gist, Myriad is UCL's primary HPC cluster. Access is via SSH through a gateway node (`ssh-gateway.ucl.ac.uk`), since Myriad itself isn't directly reachable from outside UCL's network. The `ProxyJump` directive in the SSH config handles this automatically so you only need one command to log in.
 
 ---
 ## 1. Install OpenSSH & rsync
 
-both macOS & linux should also come with ```ssh``` already. Double check by running:
+Both macOS & Linux should come with `ssh` already. Double check by running:
 ```bash
 ssh 
+rsync
 ```
-If you get ```ssh: command not found``` you need to install it
+If you get eith `command not found` for any either of these you need to install them. If not skip to [**section 2.**](#2-generate-ssh-keys-if-you-dont-have-them) 
 
 For macOS use homebrew to do this. Also check it is installed: 
 ```bash
@@ -43,75 +44,99 @@ apt-get install rsync
 ```
 ---
 
-## 2. Generate an SSH Key (if you don't have one)
-This is like a password - it lets the server know you are safe and also means you should have to copy and paste your password fewer times
-First check whether you already have a key:
+## 2. Generate SSH Keys (if you don't have them)
+This is like a password — it lets the server know you are safe and means you shouldn't have to type your password every time you connect.
+
+First check whether you already have keys:
 ```bash
 ls ~/.ssh/id_*.pub
 ```
 
-If a `.pub` file is listed, you already have a keypair — skip to step 3.
+If `.pub` files are listed, you already have keypairs — skip to step 3.
 
-If not, generate one:
+If not, generate them. **You need two keys**: one for the gateway (which supports modern key types) and one specifically for Myriad (which runs an older version of OpenSSH that only accepts RSA keys).
+
 ```bash
+# Key for the gateway
 ssh-keygen -t ed25519 -C "your_email@example.com"
 # Accept the default file location (~/.ssh/id_ed25519)
-# You do not need a passcode (can if you want), can just press enter to be blank
+# You do not need a passphrase — press enter to leave blank
+
+# Key for Myriad (requires RSA due to old OpenSSH 7.4)
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa_ucl
+# Press enter to leave passphrase blank
 ```
+
 ---
 
 ## 3. Configure SSH
 
 Add the following to your `~/.ssh/config` file (create it if it doesn't exist). This sets up aliases so you can connect with a single short command, and routes traffic through the gateway automatically via `ProxyJump`.
+
 ```text
 # The Gateway (UCL's external-facing SSH jump host)
 Host ucl-gateway
     HostName ssh-gateway.ucl.ac.uk
     User <userid>
     IdentityFile ~/.ssh/id_ed25519
+    AddKeysToAgent yes
 
+# Myriad cluster (connected via gateway)
 Host ucl-work
     HostName myriad.rc.ucl.ac.uk
     User <userid>
     ProxyJump ucl-gateway
-    IdentityFile ~/.ssh/id_ed25519
+    IdentityFile ~/.ssh/id_rsa_ucl
+    ForwardAgent yes
 ```
 
-Replace `<your-ucl-username>` with your UCL user ID (e.g. `ucjvabc`).
+Replace `<userid>` with your UCL user ID (e.g. `ucjvabc`).
+
+> **Why two different keys?** Myriad runs OpenSSH 7.4, which is too old to accept ed25519 keys — it silently rejects them and falls back to asking for your password. The gateway runs a newer version and handles ed25519 fine. Using `ForwardAgent yes` means your Mac's ssh-agent passes the right key through to Myriad automatically.
 
 ---
 
-## 4. Copy Your SSH Key to the Cluster
+## 4. Copy Your SSH Keys to the Cluster
 
-This installs your public key on the remote machines so you can log in without a password. You need to do this for both the gateway and the cluster itself.
+This installs your public keys on the remote machines so you can log in without a password. You need to do this for both the gateway and Myriad separately.
+
 ```bash
-# [1] Copy your public key to the gateway node
-ssh-copy-id <your-ucl-username>@ssh-gateway.ucl.ac.uk
+# [1] Copy ed25519 key to the gateway
+ssh-copy-id -i ~/.ssh/id_ed25519.pub <userid>@ssh-gateway.ucl.ac.uk
 
-# [2] Copy your public key to Myriad (routed through the gateway via your config)
-ssh-copy-id ucl-work
+# [2] Copy RSA key to Myriad (routed through the gateway via your config)
+ssh-copy-id -i ~/.ssh/id_rsa_ucl.pub ucl-work
 
 # Enter your UCL password when prompted for each
 ```
 
-> **What this does:** `ssh-copy-id` appends your `~/.ssh/id_*.pub` public key to `~/.ssh/authorized_keys` on the remote machine, enabling key-based (passwordless) login going forward.
+Then fix permissions on Myriad (log in with your password one last time):
+```bash
+ssh ucl-work
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+exit
+```
+
+> **What this does:** `ssh-copy-id` appends your public key to `~/.ssh/authorized_keys` on the remote machine, enabling passwordless login going forward.
 
 ---
 
 ## 5. Log In
 ```bash
 ssh ucl-work
-
 ```
 
 This connects to Myriad via the gateway in one step. You should not be prompted for a password if key copying succeeded!
 
-Now have a play around on the cluster
+Now have a play around on the cluster:
 ```bash
-ls # see your folders 
-ml avail # see all the modules which are available on the cluster
+ls          # see your folders 
+ml avail    # see all the modules available on the cluster
 ```
+
 --- 
+
 ## 6. Setup pipeline on cluster
 **ASSUMING YOU ALREADY SETUP LOCALLY**:
 Copy your local code to the cluster
@@ -119,9 +144,9 @@ Copy your local code to the cluster
 rsync_code.sh
 # which runs...
 # rsync -avz /local/path/to/pipeline/ ucl-work:~/pipeline
-
 ```
-log in to add conda module 
+
+Log in to add conda module:
 ```bash 
 ssh ucl-work
 ml python/miniconda3/24.3.0-0
@@ -132,13 +157,13 @@ ssh ucl-work
 which conda
 ```
 
-Next add the important commands to your ~/.bash_profile 
+Next add the important commands to your `~/.bash_profile`:
 
 ```bash
 # To open & edit the bash profile run 
 nano ~/.bash_profile
 ```
-Go down to the bottom and copy paste the following
+Go down to the bottom and copy paste the following:
 ```bash
 # Set the following variables to be cluster friendly (i.e., not docker)
 export PC_LOCATION="HPC"
@@ -157,14 +182,14 @@ export APPTAINER_CACHEDIR="$HOME/Scratch/.apptainer"
 
 REMOTE_PROJECT_DIRS="$HOME/Scratch/projects/"
 [[ ! -d "$REMOTE_PROJECT_DIRS" ]] && mkdir -p "$REMOTE_PROJECT_DIRS"
-
 ```
-To save press ```ctrl+x```
 
-To apply the changes run ```source ~/.bash_profile``` you do not need to do this every time you login it will be done automatically.
+To save press `ctrl+x`.
+
+To apply the changes run `source ~/.bash_profile`. You do not need to do this every time you login — it will be done automatically.
 
 ## 7. Add python environments on the cluster
-Just as you ran locally you can install the python environments with conda
+Just as you ran locally you can install the python environments with conda:
 ```bash
 cd $PIPELINE_DIR/config
 bash s00_python_environments.sh
@@ -176,13 +201,10 @@ cd $PIPELINE_DIR/config
 bash s00_containers.sh 
 ```
 
-
-
-
-
-
+---
 
 # WORK IN PROGRESS 
+
 ---
 
 # How the pipeline (will) integrate with the cluster 
