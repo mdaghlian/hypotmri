@@ -104,7 +104,7 @@ JOB_NAME="fprep_func_${SUBJECT}_${SESSION}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
-RUNNER_SCRIPT="~/pipeline/functional/s03_fmriprep_func.sh \
+RUNNER_SCRIPT="~/pipeline/functional/s03_fmriprep_func.py \
     --bids-dir '${SUBMIT_BIDS_DIR}' \
     --sub      '${SUBJECT}' \
     --ses      '${SESSION}' \
@@ -125,13 +125,14 @@ QSUB_CMD="source ~/.bash_profile; \
     mkdir -p '${REMOTE_LOG_DIR}'; \
     conda activate preproc; \
     qsub -V \
-        -N  '${JOB_NAME}' \
-        -o  '${LOG_OUT}' \
-        -e  '${LOG_ERR}' \
-        -l  h_rt=10:00:00 \
-        -l  mem=2G \
-        -pe smp 4 \
-        -j  n \
+            -N  '${JOB_NAME}' \
+            -o  '${LOG_OUT}' \
+            -e  '${LOG_ERR}' \
+            -l  h_rt=24:00:00 \
+            -l  mem=8G \
+            -l  tmpfs=50G \
+            -pe smp 8 \
+            -j  n \
         ${RUNNER_SCRIPT}"
 echo "$QSUB_CMD"
 

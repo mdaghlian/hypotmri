@@ -86,13 +86,13 @@ FPREP_FUNC_DIR="${FPREP_BIDS_DIR}/${SUBJECT}/${SESSION}/func"
 if [[ ! -d "${FPREP_FUNC_DIR}" ]]; then
     mkdir -p "${FPREP_FUNC_DIR}"
 fi
-
 run_counter=0
 for BOLD_FILE in "${BOLD_FILES[@]}"; do
     # Get clean run name as: 
     # -> sub-XX_ses-XX_task-XX_run-XX_bold.nii.gz
     BOLD_BASENAME=$(basename "$BOLD_FILE")
     # Extract task and run labels if present
+    echo "Processing run: ${BOLD_BASENAME}"
     task_part=""
     if [[ "$BOLD_BASENAME" =~ task-([a-zA-Z0-9]+) ]]; then
         task_label="task-${BASH_REMATCH[1]}"
@@ -110,7 +110,7 @@ for BOLD_FILE in "${BOLD_FILES[@]}"; do
 cat <<EOF > "$FPREP_JSON"
 {
   "RepetitionTime": $BOLD_TR,
-  "TaskName": "${TASK_LABEL}"
+  "TaskName": "${task_label}"
 }
 EOF
     cp $BOLD_FILE $FPREP_BOLD
@@ -122,7 +122,7 @@ echo "=========================================="
 echo "Copied it all over - now for fmriprep"
 echo "=========================================="
 # MD note higher fd-spike 0.9
-  
+
 [[ ! -d "${BIDS_DIR}/derivatives/fmriprep" ]] && mkdir -p "${BIDS_DIR}/derivatives/fmriprep"
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then
     docker run --rm \

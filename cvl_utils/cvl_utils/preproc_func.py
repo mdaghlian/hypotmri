@@ -9,11 +9,20 @@ import threading
 from pathlib import Path
 import hashlib
 import re
-
+import nibabel as nib
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _get_tr(bold_file: str) -> float:
+    """Read TR (in seconds) from a NIfTI header's pixdim[4]."""
+    hdr = nib.load(bold_file).header
+    tr = float(hdr.get_zooms()[3])
+    if tr <= 0:
+        raise ValueError(
+            'TR read from {} is {} — check pixdim[4]'.format(bold_file, tr))
+    print('  TR: {} s'.format(tr))
+    return tr
 
 def _bold_base(bold_file: str, subject: str, session: str) -> str:
     """
