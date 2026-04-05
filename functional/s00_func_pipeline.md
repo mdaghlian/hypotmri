@@ -66,3 +66,29 @@ On the cluster
 s03_fmriprep_func_hpc.sh --sub hp01 --ses 01 \
     --input-file s2_coreg --bids-dir $BIDS_DIR
 ```
+
+## [4] confounds 
+- Grabs the confounds & bold-brainmasks from fmriprep
+- Removes the motion related ones 
+- Replace them with our own, FSL derived motion confounds (from moco file)
+- Save as .tsv file 
+- Run PCA on select components of confound file, apply sg-filter, save as .tsv 
+- Volume data: Apply sg-filter & regress out PCA noise components
+- Surface data: Apply sg-filter & regress out PCA noise components
+
+Locally: 
+```bash
+s04_confounds.py --sub hp01 --ses 01 \
+    --bids-dir $BIDS_DIR \
+    --moco-file s2_coreg \
+    --output-dir s4_denoised
+```
+
+On the cluster:
+
+```
+s04_confounds_hpc.sh --sub hp01 --ses 01 \
+    --bids-dir $BIDS_DIR \
+    --moco-file s2_coreg \
+    --output-dir s4_denoised
+```

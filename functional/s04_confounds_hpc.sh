@@ -7,7 +7,7 @@ usage() {
     echo ""
     echo "Required Arguments:"
     echo "  --bids-dir      Path to local BIDS directory"
-    echo "  --input-file    input file, placed in BID_DIR/derivatives"
+    echo "  --moco-file    input file, placed in BID_DIR/derivatives"
     echo "  --output-file   output file, placed in BID_DIR/derivatives"
     echo "  --sub           Subject label (e.g., sub-01)"
     echo "  --ses           Session label (e.g., ses-01)"
@@ -20,18 +20,17 @@ usage() {
 
 # --- SCRIPT OVERVIEW ---
 # [1] Rsync input file to cluster (if running from local)
-# [2] qsub s02_coreg.py
+# [2] qsub s04_confounds.py
 #     - If local: submitted via ssh to REMOTE_HOST
 #     - If HPC:   submitted directly via qsub
 # --- --- --- --- ---
 
 # --- Parse Arguments ---
 SKIP_SYNC=false
-TASK=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids-dir)         BIDS_DIR="$2";   shift 2 ;;
-        --input-file)       INPUT_FILE="$2"; shift 2 ;;
+        --moco-file)        MOCO_FILE="$2"; shift 2 ;;
         --output-file)      OUTPUT_FILE="$2"; shift 2 ;;
         --sub)              SUBJECT="$2";    shift 2 ;;
         --ses)              SESSION="$2";    shift 2 ;;
@@ -47,7 +46,7 @@ SESSION="ses-${SESSION#ses-}"
 
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]]    && echo "Error: --bids-dir required"    && usage
-[[ -z "$INPUT_FILE" ]]   && echo "Error: --input-file required"   && usage
+[[ -z "$MOCO_FILE" ]]   && echo "Error: --moco-file required"   && usage
 [[ -z "$OUTPUT_FILE" ]]  && echo "Error: --output-file required"  && usage
 [[ -z "$SUBJECT" ]]     && echo "Error: --sub required"         && usage
 [[ -z "$SESSION" ]]     && echo "Error: --ses required"         && usage
@@ -63,18 +62,14 @@ else
 fi
 # --- Rsync func + fmap data to cluster (local only) ---
 if [[ "${PC_LOCATION}" == "local" ]] && [[ "$SKIP_SYNC" != true ]]; then
-    echo "Rsyncing freesurfer"
+    echo "Rsyncing ${MOCO_FILE}"
     bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_to_hpc.sh" \
         --bids-dir "$BIDS_DIR" \
         --sub      "$SUBJECT" \
         --ses      "$SESSION" \
-        --deriv freesurfer
-    echo "Rsyncing input file"
-    bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_to_hpc.sh" \
-        --bids-dir "$BIDS_DIR" \
-        --sub      "$SUBJECT" \
-        --ses      "$SESSION" \
-        --deriv "${INPUT_FILE}"
+        --deriv    "$MOCO_FILE" 
+    # RSYNC FMRIPREP? 
+    # ** TODO **
     bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_code.sh"
     echo "Done copying."
 else
@@ -83,7 +78,7 @@ fi
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
-echo "Running MOCO + COREG"
+echo "Running CONFOUNDS " 
 echo "-------------------------------------------------------"
 if [[ "${PC_LOCATION}" == "local" ]]; then
     echo "  Running from:         local"
@@ -99,25 +94,23 @@ echo "-------------------------------------------------------"
 
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_NAME="moco_${SUBJECT}_${SESSION}"
+JOB_NAME="confounds_${SUBJECT}_${SESSION}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
 # Build optional --task flag (omit entirely if TASK is empty)
 
-RUNNER_SCRIPT="~/pipeline/functional/s02_coreg.py \
+RUNNER_SCRIPT="~/pipeline/functional/s04_confounds.py \
     --bids-dir    '${SUBMIT_BIDS_DIR}' \
-    --input-file  '${INPUT_FILE}' \
+    --moco-file  '${MOCO_FILE}' \
     --output-file '${OUTPUT_FILE}' \
     --sub         '${SUBJECT}' \
-    --ses         '${SESSION}' \
-    --docker      '${FSL_FREESURFER_SIF}'"
+    --ses         '${SESSION}'"
 
 echo "-------------------------------------------------------"
-echo "Submitting COREGISTRATION job"
+echo "Submitting CONFOUNDS job"
 echo "  Subject:  $SUBJECT"
 echo "  Session:  $SESSION"
-echo "  Task:     ${TASK:-<all>}"
 echo "  Logs:     ${REMOTE_HOST:+${REMOTE_HOST}:}${LOG_OUT}"
 echo "-------------------------------------------------------"
 QSUB_CMD="source ~/.bash_profile; \
@@ -129,8 +122,8 @@ QSUB_CMD="source ~/.bash_profile; \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
         -l  h_rt=2:00:00 \
-        -l  mem=16G \
-        -pe smp 8 \
+        -l  mem=8G \
+        -pe smp 4 \
         -j  n \
         ${RUNNER_SCRIPT}"
 

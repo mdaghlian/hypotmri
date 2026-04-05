@@ -21,7 +21,7 @@ Usage example
 -------------
 python s02_coreg.py \\
     --input-file   s1_sdc_AFNI \\
-    --output-dir   s2_coreg \\
+    --output-file   s2_coreg \\
     --sub          sub-01 \\
     --ses          ses-01 \\
     --subjects-dir /data/freesurfer \\

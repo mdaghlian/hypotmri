@@ -1,0 +1,15 @@
+# NOT ORGANIZED YET
+misc:
+    volumes_to_chop: 0 # Number of volumes to chop
+    chop: False # Should we chop volumes?
+
+denoise:
+    nuissances:  ['csf','white_matter','a_comp_cor_00','a_comp_cor_01','a_comp_cor_02','a_comp_cor_03','a_comp_cor_04','t_comp_cor_00','t_comp_cor_01','t_comp_cor_02','t_comp_cor_03','t_comp_cor_04','std_dvars','trans_x','trans_y','trans_z','rot_x','rot_y','rot_z','framewise_displacement','dvars'] # Variables to include in noise model. 
+    denoise_comps: 5 # Number of PCAs to reduce to
+    
+filter: 
+    polyorder: 3 # Order of sg filter.
+    tr: 1 # Tr assumed by sg filter
+    deriv: 0
+    window_length: 347 # Window length of filter
+
