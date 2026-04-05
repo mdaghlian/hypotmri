@@ -27,7 +27,7 @@ def quick_pycortex_import(sub, fsdir):
         sub=sub, 
         fs_dir=fsdir, 
     )
-    roi_list = dag_roi_list_expand(sub=sub, fs_dir=sub_pcx.fs_dir, roi_list='b14')
+    roi_list = dpu_roi_list_expand(sub=sub, fs_dir=sub_pcx.fs_dir, roi_list='b14')
     roi_list = [i for i in roi_list if "all" not in i.lower()]
     print(roi_list)
     sub_pcx.add_rois_to_svg(roi_list)
