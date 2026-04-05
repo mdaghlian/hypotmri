@@ -441,7 +441,6 @@ def project_to_surface(
     bold_fs_out: str,
     subject: str,
     subjects_dir: str,
-    subject_output_dir: str,
     bold_base: str,
     work_dir: str,
     docker_image: str,
@@ -484,10 +483,8 @@ def project_to_surface(
             env_vars={'SUBJECTS_DIR': subjects_dir_c},
         )
 
-        surf_final = os.path.join(subject_output_dir, surf_name)
-        shutil.copy(surf_work, surf_final)
-        outputs[hemi] = surf_final
-        print('  Created surface timeseries: {}'.format(surf_final))
+        outputs[hemi] = surf_work
+        print('  Created surface timeseries: {}'.format(surf_work))
 
     return outputs
 
@@ -529,7 +526,7 @@ def process_run(
     # Derive bold_base: BIDS entities from task onward, no sub/ses prefix,
     # no file extensions.  Used as suffix arg to build_output_name.
     # ------------------------------------------------------------------
-    base = _bold_base(bold_file, subject, session)
+    base = f'{task_label}_{run_label}'
 
     def _final(suffix, ext='.nii.gz'):
         return build_output_name(
@@ -543,7 +540,7 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 2b] Registering sbref_i to BREF_MASTER...')
 
-    mat_name = '{}_{}_brefi_to_bref_master.mat'.format(task_label, run_label)
+    mat_name = '{}_brefi_to_bref_master.mat'.format(base)
     sbref_to_master_final = os.path.join(subject_output_dir, mat_name)
     sbref_to_master_work  = _work(mat_name)
 
@@ -657,20 +654,19 @@ def process_run(
     # Step 6 - Surface projection
     # ------------------------------------------------------------------
     print('\n  [Step 6] Projecting to cortical surface...')
-
     surf_lh_final = os.path.join(
         subject_output_dir,
-        '{}_space-fsnative_hemi-L_bold.func.gii'.format(base))
+        '{}_{}_{}_space-fsnative_hemi-L_bold.func.gii'.format(subject, session, base))
     surf_rh_final = os.path.join(
         subject_output_dir,
-        '{}_space-fsnative_hemi-R_bold.func.gii'.format(base))
+        '{}_{}_{}_space-fsnative_hemi-R_bold.func.gii'.format(subject, session, base))
 
     if not check_skip(
         {'surf_lh': surf_lh_final, 'surf_rh': surf_rh_final},
         ow['surf_project'],
         'Step 6: surface projection',
     ):
-        project_to_surface(
+        outputs = project_to_surface(
             bold_fs_out=bold_fs_out_work,
             subject=subject,
             subjects_dir=subjects_dir,
@@ -679,6 +675,8 @@ def process_run(
             work_dir=safe_work_dir,
             docker_image=docker_image,
         )
+        shutil.copy(outputs['lh'], surf_lh_final)
+        shutil.copy(outputs['rh'], surf_rh_final)
     shutil.rmtree(work_dir,)
     return {
         'sbref_to_master_mat': sbref_to_master_final,
@@ -842,6 +840,8 @@ def run_pipeline(
         )
 
     print('\nFound {} BOLD run(s).'.format(len(bold_files)))
+    for idx, bf in enumerate(bold_files, start=1):
+        print('  {}. {}'.format(idx, os.path.basename(bf)))
 
     all_results = {}
 
@@ -854,7 +854,7 @@ def run_pipeline(
         run_label, task_label = get_labels(bold_file)
 
         # ------------------------------------------------------------------
-        # Locate per-run sbref, or synthesise one from vol 0 of this BOLD run
+        # Locate per-run sbref
         # ------------------------------------------------------------------
         if run_label:
             sbref_pat = os.path.join(
@@ -869,37 +869,36 @@ def run_pipeline(
             sbref_matches = [f for f in all_sbrefs
                              if not re.search(r'run-\d+', os.path.basename(f))]
 
-        if sbref_matches:
-            sbref_file   = sbref_matches[0]
-            sbref_source = 'input'
-        else:
-            # Build the expected output name and skip recompute if it exists
-            parts = [subject]
-            if session:
-                parts.append(session)
-            if task_label:
-                parts.append(task_label)
-            if run_label:
-                parts.append(run_label)
-            parts.append('desc-vol0bold_sbref')
-            synthetic_sbref = os.path.join(
-                subject_output_dir, '_'.join(parts) + '.nii.gz')
+        sbref_file   = sbref_matches[0]
+        sbref_source = 'input'
+        # --- NOT IMPLEMENTED: synthetic sbref fallback ---
+        # else:
+        #     # Build the expected output name and skip recompute if it exists
+        #     parts = [subject]
+        #     if session:
+        #         parts.append(session)
+        #     if task_label:
+        #         parts.append(task_label)
+        #     if run_label:
+        #         parts.append(run_label)
+        #     parts.append('desc-vol0bold_sbref')
+        #     synthetic_sbref = os.path.join(
+        #         subject_output_dir, '_'.join(parts) + '.nii.gz')
 
-            if not Path(synthetic_sbref).exists():
-                print('  No SBREF found — extracting vol 0 as synthetic sbref...')
-                synthetic_sbref = make_first_vol_sbref(
-                    bold_file=bold_file,
-                    subject=subject,
-                    session=session,
-                    run_label=run_label,
-                    task_label=task_label,
-                    subject_output_dir=subject_output_dir,
-                )
-            else:
-                print('  No SBREF found — reusing existing synthetic sbref.')
-
-            sbref_file   = synthetic_sbref
-            sbref_source = 'vol-0 (synthetic)'
+        #     if not Path(synthetic_sbref).exists():
+        #         print('  No SBREF found — extracting vol 0 as synthetic sbref...')
+        #         synthetic_sbref = make_first_vol_sbref(
+        #             bold_file=bold_file,
+        #             subject=subject,
+        #             session=session,
+        #             run_label=run_label,
+        #             task_label=task_label,
+        #             subject_output_dir=subject_output_dir,
+        #         )
+        #     else:
+        #         print('  No SBREF found — reusing existing synthetic sbref.')
+        #     sbref_file   = synthetic_sbref
+        #     sbref_source = 'vol-0 (synthetic)'
 
         print('  BOLD  : {}'.format(bold_file))
         print('  SBREF : {} [{}]'.format(sbref_file, sbref_source))
@@ -954,14 +953,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p.add_argument('--ses',          default='ses-01',
                    help='Session label')
-
-    def str2bool(v):
-        if v.lower() in ('true', '1', 'yes'):
-            return True
-        elif v.lower() in ('false', '0', 'no'):
-            return False
-        raise argparse.ArgumentTypeError(
-            "Boolean value expected, got '{}'".format(v))
 
     p.add_argument('--subjects-dir', default=None,
                    help='FreeSurfer SUBJECTS_DIR (default: $SUBJECTS_DIR)')
