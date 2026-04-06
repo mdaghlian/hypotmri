@@ -267,7 +267,7 @@ class PrfObj(object):
             _ =  self.csf_ts_plotter(idx)
         elif self.model.lower()=='gauss':
             _ =  self.gauss_ts_plotter(idx)
-        elif self.model.lower()=='dn':
+        elif self.model.lower() in ('dn', 'norm', 'diff', 'dog'):
             _ = self.twoRF_ts_plotter(idx)
         if do_str:
             pstr = self.make_prf_str(idx)
