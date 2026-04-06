@@ -2,10 +2,10 @@
 
 # --- Default Values ---
 # Make all .sh files in those directories executable
-chmod +x "${PIPELINE_DIR}/config"/*.sh
-chmod +x "${PIPELINE_DIR}/config/hpc_helpers/"/*.sh
-chmod +x "${PIPELINE_DIR}/anatomical"/*.sh
-chmod +x "${PIPELINE_DIR}/functional"/*.sh
+chmod +x "${PIPELINE_DIR}/config"/*
+chmod +x "${PIPELINE_DIR}/config/hpc_helpers/"/*
+chmod +x "${PIPELINE_DIR}/anatomical"/*
+chmod +x "${PIPELINE_DIR}/functional"/*
 export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"
 export PATH="${PIPELINE_DIR}/config:${PATH}"
 export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"

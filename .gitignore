@@ -2,12 +2,12 @@
 *.pkl
 dockfiles/*
 siffiles/*
-/config/config_pipeline.sh
 license.txt
 **/z_*/
 **crash-**
 **/.DS_Store
 .vscode*
 /config/project_*.sh
+/postproc/project_*.yml
 *.egg-info/
 *__pycache__/
