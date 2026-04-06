@@ -35,6 +35,9 @@ Arguments:
     --n-pca         Number of PCA components to retain (default: 6)
     --sg-window     Savitzky-Golay filter window length in SECONDS (default: 120)
     --sg-order      Savitzky-Golay filter polynomial order (default: 3)
+    --filter-only   Skip confound extraction/PCA; apply SG high-pass filter only.
+                    Outputs saved as _desc-filtered_bold (vs _desc-denoised_bold).
+                    Useful for isolating the contribution of filtering vs denoising.
 
 Usage example
 -------------
@@ -43,7 +46,16 @@ python s04_confounds.py \\
     --moco-file s03_motion_correction \\
     --output-file s04_motion_confounds \\
     --sub 01 \\
-    --ses 01 
+    --ses 01
+
+# Filter-only mode (no confound regression):
+python s04_confounds.py \\
+    --bids-dir /path/to/bids_dir \\
+    --moco-file s03_motion_correction \\
+    --output-file s04_motion_confounds \\
+    --sub 01 \\
+    --ses 01 \\
+    --filter-only
 """
 
 import argparse
@@ -59,6 +71,10 @@ import numpy as np
 import pandas as pd
 from nipype.algorithms.confounds import FramewiseDisplacement, ComputeDVARS
 
+from scipy.signal import savgol_filter
+from scipy import stats
+from sklearn.decomposition import PCA
+
 from cvl_utils.preproc_func import (
     build_output_name,
     check_skip,
@@ -70,6 +86,10 @@ from cvl_utils.preproc_func import (
     run_cmd,
     _get_tr,
 )
+from cvl_utils.denoise import (
+    PCA_denoiser, 
+    SGFilter,
+)
 
 # ---------------------------------------------------------------------------
 # Step keys — one per docstring step (Steps 1-3 are one atomic unit)
@@ -80,6 +100,8 @@ STEP_KEYS = [
     'pca_confounds',   # Step 4:    PCA + SG high-pass filter → pca_confounds.tsv
     'denoise_vol',     # Step 5a:   SG high-pass + OLS regression on volumetric BOLD
     'denoise_surf',    # Step 5b:   same for surface projections
+    'filter_vol',      # Filter-only 5a: SG high-pass only on volumetric BOLD (no regression)
+    'filter_surf',     # Filter-only 5b: same for surface projections
 ]
 
 # ---------------------------------------------------------------------------
@@ -96,43 +118,6 @@ MOTION_PATTERNS = [
     r'^rmsd',
     r'^motion_outlier',
 ]
-
-
-# ---------------------------------------------------------------------------
-# Internal helper: convert SG window from seconds to volumes
-# ---------------------------------------------------------------------------
-
-def _sg_window_to_vols(sg_window_s: int, tr: float, n_vols: int) -> int:
-    """
-    Convert a Savitzky-Golay window length in seconds to volumes, enforcing
-    odd length and an upper bound of n_vols.
-
-    Mirrors the TR-sanity checks and conversion in SGFilter.filter_data().
-
-    Parameters
-    ----------
-    sg_window_s : window length in seconds
-    tr          : repetition time in seconds
-    n_vols      : number of volumes (upper bound)
-
-    Returns
-    -------
-    sg_win : window length in volumes (odd, <= n_vols)
-    """
-    sg_tr = tr
-    if sg_tr < 0.01:
-        sg_tr = np.round(sg_tr * 1000, decimals=3)
-    if sg_tr > 20:
-        sg_tr = sg_tr / 1000.0
-
-    sg_win = int(sg_window_s / sg_tr)
-    if sg_win % 2 == 0:
-        sg_win += 1
-    if sg_win > n_vols:
-        sg_win = n_vols if n_vols % 2 == 1 else n_vols - 1
-
-    return sg_win
-
 
 # ---------------------------------------------------------------------------
 # Step functions
@@ -165,6 +150,9 @@ def extract_fmriprep_confounds(
     print('  fMRIprep confounds: kept {} / {} columns '
           '(dropped {} motion columns)'.format(
               len(noise_df.columns), len(df.columns), len(motion_cols)))
+    print('dropping')
+    for c in motion_cols:
+        print(c)
     return noise_df
 
 
@@ -288,10 +276,8 @@ def build_confounds_tsv(
 def compute_pca_confounds(
     confounds_tsv: str,
     output_tsv: str,
-    tr: float,
-    n_components: int = 6,
-    sg_order: int = 3,
-    sg_window: int = 120,          # SECONDS (converted to volumes via TR internally)
+    lf_filter,
+    ncomps: int = 6,
     nuissance_vars: list = [
         'csf', 'white_matter',
         'a_comp_cor_00', 'a_comp_cor_01', 'a_comp_cor_02', 'a_comp_cor_03', 'a_comp_cor_04',
@@ -301,7 +287,7 @@ def compute_pca_confounds(
     ],
 ) -> None:
     """
-    Step 4: Run PCA on the confound matrix, retain the top *n_components*,
+    Step 4: Run PCA on the confound matrix, retain the top *ncomps*,
     high-pass filter each component with a Savitzky-Golay filter to remove
     slow drifts, and save.
 
@@ -321,18 +307,13 @@ def compute_pca_confounds(
     ----------
     confounds_tsv : merged confound file (from build_confounds_tsv)
     output_tsv    : destination path (pca_confounds.tsv)
-    tr            : repetition time in seconds
-    n_components  : number of PCA components to retain (default: 6)
-    sg_window     : SG filter window length in SECONDS (default: 120)
-    sg_order      : SG polynomial order (default: 3)
+    ncomps  : number of PCA components to retain (default: 6) 
     nuissance_vars: columns to select from the confounds tsv
     """
-    from scipy.signal import savgol_filter
-    from scipy import stats
-    from sklearn.decomposition import PCA
-
     df = pd.read_csv(confounds_tsv, sep='\t', na_values='n/a')
-
+    if isinstance(nuissance_vars, str):
+        if nuissance_vars == 'all':
+            nuissance_vars = list(df.columns)
     # Subset to nuissance variables that are actually present
     available = [v for v in nuissance_vars if v in df.columns]
     if not available:
@@ -341,77 +322,34 @@ def compute_pca_confounds(
                 confounds_tsv))
     df = df[available]
 
-    arr = np.array(df, dtype=float)
-
-    # Replace NaNs with per-column medians (matches prepare_frame())
-    medians = np.nanmedian(arr, axis=0)
-    for col_idx, med in enumerate(medians):
-        mask = np.isnan(arr[:, col_idx])
-        arr[mask, col_idx] = med
-
-    # Z-score
-    arr_z = stats.zscore(arr)
-
-    # PCA
-    n_comp = min(n_components, arr_z.shape[1], arr_z.shape[0])
-    pca = PCA(n_components=n_comp)
-    components = pca.fit_transform(arr_z)           # (n_volumes, n_comp)
-
-    print('  PCA explained variance: {}'.format(
-        np.round(pca.explained_variance_ratio_, 3)))
-
-    # Convert SG window from seconds to volumes (mirrors SGFilter.filter_data())
-    sg_win = _sg_window_to_vols(sg_window, tr, components.shape[0])
-
-    # High-pass filter: subtract SG trend, add back mean (remove slow drifts)
-    comps_T    = components.T                       # (n_comp, n_volumes)
-    trend      = savgol_filter(comps_T, window_length=sg_win,
-                               polyorder=sg_order, deriv=0, axis=1, mode='nearest')
-    hp_comps_T = comps_T - trend + trend.mean(axis=-1, keepdims=True)
-    hp_components = hp_comps_T.T                   # (n_volumes, n_comp)
-
-    col_names = ['pca_comp_{:02d}'.format(i + 1) for i in range(n_comp)]
-    out_df = pd.DataFrame(hp_components, columns=col_names)
-
+    pca_denoiser = PCA_denoiser(
+        confounds=df, 
+        lf_filter=lf_filter, 
+        ncomps=ncomps,
+    )
+    pca_comps = pca_denoiser.run_pca()
+    col_names = ['pca_comp_{:02d}'.format(i + 1) for i in range(ncomps)]
+    out_df = pd.DataFrame(pca_comps, columns=col_names)
     out_df.to_csv(output_tsv, sep='\t', index=False, na_rep='n/a')
-    print('  PCA confounds ({} components, SG window={}s / {} vols) -> {}'.format(
-        n_comp, sg_window, sg_win, output_tsv))
+    return pca_denoiser
 
 
 def denoise_volume(
     bold_file: str,
-    pca_confounds_tsv: str,
+    pca_denoiser, 
     output_nii: str,
-    tr: float,
-    sg_window: int = 120,          # SECONDS (converted to volumes via TR internally)
-    sg_order: int = 3,
 ) -> None:
     """
-    Step 5 (volume): Denoise a 4-D NIfTI volume by:
-      1. High-pass filtering the data with the same SG filter used on confounds.
-      2. Regressing out the PCA confound components.
-      3. Adding back the per-voxel mean.
+    (volume): Denoise a 4-D NIfTI
 
     Output saved as _desc-denoised_bold.nii.gz.
-
-    OLS design matrix: DM = [intercept | pca_comps]  (intercept first).
-    NaN values in confounds are replaced with per-column medians before
-    regression (matches prepare_frame()).
-
-    R² is computed per voxel on the HP-filtered data and the median is
-    printed as a diagnostic (matches PCA_denoiser.PCA_regression()).
 
     Parameters
     ----------
     bold_file         : motion-corrected BOLD NIfTI (sdc+moco)
-    pca_confounds_tsv : PCA confound file (from compute_pca_confounds)
+    pca_denoiser      : PCADenoiser object 
     output_nii        : destination path (_desc-denoised_bold.nii.gz)
-    tr                : repetition time in seconds
-    sg_window         : SG filter window in SECONDS (must match compute_pca_confounds)
-    sg_order          : SG polynomial order
     """
-    from scipy.signal import savgol_filter
-
     print('  Loading BOLD: {}'.format(bold_file))
     img    = nib.load(bold_file)
     data   = img.get_fdata(dtype=np.float32)    # (X, Y, Z, T)
@@ -420,44 +358,9 @@ def denoise_volume(
     flat   = data.reshape(-1, n_vols)           # (voxels, T)
 
     # Load PCA confounds
-    conf_df  = pd.read_csv(pca_confounds_tsv, sep='\t', na_values='n/a')
-    conf_mat = conf_df.values.astype(float)
-
-    # Replace NaNs with per-column medians (matches prepare_frame())
-    medians = np.nanmedian(conf_mat, axis=0)
-    for col_idx, med in enumerate(medians):
-        mask = np.isnan(conf_mat[:, col_idx])
-        conf_mat[mask, col_idx] = med
-
-    # Convert SG window from seconds to volumes
-    sg_win = _sg_window_to_vols(sg_window, tr, n_vols)
-
-    # High-pass filter the BOLD data (axis=-1 = time)
-    print('  High-pass filtering BOLD (SG window={}s / {} vols, order={})...'.format(
-        sg_window, sg_win, sg_order))
-    trend   = savgol_filter(flat, sg_win, sg_order, axis=-1, mode='nearest')
-    flat_hp = flat - trend + trend.mean(axis=-1, keepdims=True)
-
-    # OLS regression — DM = [ones | pca_comps]
-    print('  Regressing out {} PCA confounds...'.format(conf_mat.shape[1]))
-    dm = np.hstack([np.ones((n_vols, 1)), conf_mat])       # (T, 1 + n_comp)
-    betas, _, _, _ = np.linalg.lstsq(dm, flat_hp.T, rcond=None)
-    yhat  = (dm @ betas).T                                 # (voxels, T)
-    resid = flat_hp - yhat
-
-    # R² diagnostic per voxel (matches PCA_denoiser.PCA_regression())
-    data_var = flat_hp.var(axis=-1)
-    rsq = np.divide(
-        resid.var(axis=-1), data_var,
-        out=np.zeros_like(data_var), where=data_var != 0,
-    )
-    print('  R² (median across voxels): {:.4f}'.format(np.nanmedian(rsq)))
-
-    # Add back per-voxel mean
-    resid += np.nanmean(flat, axis=-1, keepdims=True)
-
+    flat_denoised = pca_denoiser.PCA_regression(flat)
     # Save
-    denoised = resid.reshape(shape).astype(np.float32)
+    denoised = flat_denoised.reshape(shape).astype(np.float32)
     out_img  = nib.Nifti1Image(denoised, img.affine, img.header)
     nib.save(out_img, output_nii)
     print('  Denoised volume  -> {}'.format(output_nii))
@@ -465,36 +368,20 @@ def denoise_volume(
 
 def denoise_surface(
     gifti_file: str,
-    pca_confounds_tsv: str,
+    pca_denoiser,
     output_gifti: str,
-    tr: float,
-    sg_window: int = 120,          # SECONDS (converted to volumes via TR internally)
-    sg_order: int = 3,
 ) -> None:
     """
-    Step 5 (surface): Denoise a surface GIFTI timeseries with the same
-    SG high-pass filter + OLS regression used for volumetric data.
-
+    (surface): Denoise a surface GIFTI 
+    
     Output saved as _desc-denoised_bold.func.gii.
-
-    Data orientation: (vertices, T) throughout — time is the last axis.
-
-    NaN values in confounds are replaced with per-column medians before
-    regression (matches prepare_frame()).
-
-    R² is computed per vertex on the HP-filtered data and the median is
-    printed as a diagnostic (matches PCA_denoiser.PCA_regression()).
 
     Parameters
     ----------
     gifti_file        : .func.gii surface timeseries
-    pca_confounds_tsv : PCA confound file (from compute_pca_confounds)
+    pca_denoiser      : PCADenoiser object
     output_gifti      : destination path for denoised GIFTI
-    tr                : repetition time in seconds
-    sg_window         : SG filter window in SECONDS (must match compute_pca_confounds)
-    sg_order          : SG polynomial order
     """
-    from scipy.signal import savgol_filter
 
     print('  Loading surface: {}'.format(gifti_file))
     gii    = nib.load(gifti_file)
@@ -502,45 +389,14 @@ def denoise_surface(
     data   = np.vstack(arrays).T.astype(float)   # (vertices, T)
     n_vols = data.shape[-1]
 
-    # Load confounds
-    conf_df  = pd.read_csv(pca_confounds_tsv, sep='\t', na_values='n/a')
-    conf_mat = conf_df.values.astype(float)
-
-    # Replace NaNs with per-column medians (matches prepare_frame())
-    medians = np.nanmedian(conf_mat, axis=0)
-    for col_idx, med in enumerate(medians):
-        mask = np.isnan(conf_mat[:, col_idx])
-        conf_mat[mask, col_idx] = med
-
-    # Convert SG window from seconds to volumes
-    sg_win = _sg_window_to_vols(sg_window, tr, n_vols)
-
-    # High-pass filter (axis=-1 = time)
-    trend   = savgol_filter(data, sg_win, sg_order, axis=-1, mode='nearest')
-    data_hp = data - trend + trend.mean(axis=-1, keepdims=True)
-
-    # OLS regression
-    dm = np.hstack([np.ones((n_vols, 1)), conf_mat])
-    betas, _, _, _ = np.linalg.lstsq(dm, data_hp.T, rcond=None)
-    yhat   = (dm @ betas).T
-    resid  = data_hp - yhat
-
-    # R² diagnostic per vertex (matches PCA_denoiser.PCA_regression())
-    data_var = data_hp.var(axis=-1)
-    rsq = np.divide(
-        resid.var(axis=-1), data_var,
-        out=np.zeros_like(data_var), where=data_var != 0,
-    )
-    print('  R² (median across vertices): {:.4f}'.format(np.nanmedian(rsq)))
-
-    resid += np.nanmean(data, axis=-1, keepdims=True)
+    data_denoised = pca_denoiser.PCA_regression(data)
 
     # Rebuild GIFTI
-    residual_T = resid.T                                # (T, vertices)
+    data_denoised_T = data_denoised.T                                # (T, vertices)
     new_darrays = []
     for t, da in enumerate(gii.darrays):
         new_da = nib.gifti.GiftiDataArray(
-            data=residual_T[t, :].astype(np.float32),
+            data=data_denoised_T[t, :].astype(np.float32),
             intent=da.intent,
             datatype=da.datatype,
             meta=da.meta,
@@ -550,6 +406,83 @@ def denoise_surface(
     out_gii = nib.gifti.GiftiImage(darrays=new_darrays, meta=gii.meta)
     nib.save(out_gii, output_gifti)
     print('  Denoised surface -> {}'.format(output_gifti))
+
+
+def filter_volume(
+    bold_file: str,
+    output_nii: str,
+    lf_filter,
+) -> None:
+    """
+    Filter-only (volume): Apply SG high-pass filter to a 4-D NIfTI volume
+    without any confound regression.
+
+    Identical filter parameters to denoise_volume() so outputs are directly
+    comparable — the difference between _desc-filtered_bold and
+    _desc-denoised_bold isolates the contribution of confound regression.
+
+    Output saved as _desc-filtered_bold.nii.gz.
+
+    Parameters
+    ----------
+    bold_file  : motion-corrected BOLD NIfTI (sdc+moco)
+    output_nii : destination path (_desc-filtered_bold.nii.gz)
+    lf_filter  : SGFilter
+    """
+    
+
+    print('  Loading BOLD: {}'.format(bold_file))
+    img    = nib.load(bold_file)
+    data   = img.get_fdata(dtype=np.float32)    # (X, Y, Z, T)
+    shape  = data.shape
+    n_vols = shape[-1]
+    flat   = data.reshape(-1, n_vols)           # (voxels, T)
+
+    flat_hp = lf_filter.filter_data(data=flat)
+    filtered = flat_hp.reshape(shape).astype(np.float32)
+    out_img  = nib.Nifti1Image(filtered, img.affine, img.header)
+    nib.save(out_img, output_nii)
+    print('  Filtered volume  -> {}'.format(output_nii))
+
+def filter_surface(
+    gifti_file: str,
+    output_gifti: str,
+    lf_filter,
+) -> None:
+    """
+    Filter-only (surface): Apply SG high-pass filter to a surface GIFTI
+    timeseries without any confound regression.
+
+    Output saved as _desc-filtered_bold.func.gii.
+
+    Parameters
+    ----------
+    gifti_file   : .func.gii surface timeseries
+    output_gifti : destination path for filtered GIFTI
+    lf_filter    : SGFIlter object
+    """
+
+    print('  Loading surface: {}'.format(gifti_file))
+    gii    = nib.load(gifti_file)
+    arrays = [da.data for da in gii.darrays]
+    data   = np.vstack(arrays).T.astype(float)   # (vertices, T)
+
+    data_hp = lf_filter.filter_data(data=data)
+    # Rebuild GIFTI
+    data_hp_T = data_hp.T                               # (T, vertices)
+    new_darrays = []
+    for t, da in enumerate(gii.darrays):
+        new_da = nib.gifti.GiftiDataArray(
+            data=data_hp_T[t, :].astype(np.float32),
+            intent=da.intent,
+            datatype=da.datatype,
+            meta=da.meta,
+        )
+        new_darrays.append(new_da)
+
+    out_gii = nib.gifti.GiftiImage(darrays=new_darrays, meta=gii.meta)
+    nib.save(out_gii, output_gifti)
+    print('  Filtered surface -> {}'.format(output_gifti))
 
 
 # ---------------------------------------------------------------------------
@@ -568,8 +501,10 @@ def process_run(
     subject_output_dir: str,
     n_pca: int,
     sg_window: int,
-    sg_order: int,
+    sg_polyorder: int,
+    sg_deriv: int,
     overwrite: dict,
+    filter_only: bool = False,
 ) -> dict:
     """
     Execute all per-run confound extraction and denoising steps.
@@ -580,9 +515,12 @@ def process_run(
     Step 5 (denoise_vol)   : SG high-pass + OLS regression → denoised volume
          (denoise_surf)    : same for each surface hemisphere
 
+    When filter_only=True, Steps 1-4 are skipped entirely and Step 5 applies
+    only the SG high-pass filter (no regression), saving outputs as
+    _desc-filtered_bold instead of _desc-denoised_bold.
+
     Returns a dict of final output paths for this run.
     """
-    tr = _get_tr(bold_file)
     ow = {k: False for k in STEP_KEYS}
     ow.update(overwrite)
 
@@ -602,139 +540,214 @@ def process_run(
     def _work(filename):
         return os.path.join(safe_work_dir, filename)
 
-    # ------------------------------------------------------------------
-    # Steps 1-3: Extract fMRIprep noise + mcflirt motion → merged .tsv
-    #            Output: sub-XX_ses-XX_task-XX_run-XX_desc-confounds.tsv
-    # ------------------------------------------------------------------
-    print('\n  [Steps 1-3] Extracting and merging confounds...')
+    results = {}
 
-    confounds_final = _final('{}_desc-confounds'.format(base))
-    confounds_work  = _work('confounds.tsv')
+    tr = _get_tr(bold_file)
+    # create filter object
+    lf_filter = SGFilter(
+        polyorder=sg_polyorder,
+        deriv=sg_deriv,
+        window_length=sg_window,
+        tr=tr,
+    )
+    if filter_only:
+        # ------------------------------------------------------------------
+        # Filter-only mode: SG high-pass only, no confound regression
+        # ------------------------------------------------------------------
 
-    if not check_skip(
-        {'confounds_tsv': confounds_final},
-        ow['confounds'],
-        'Steps 1-3: build confounds',
-        workdir_paths={'confounds_tsv': confounds_work},
-    ):
-        build_confounds_tsv(
-            fmriprep_confounds_tsv=fmriprep_confounds_tsv,
-            mcf_nii=bold_file,
-            mcf_par_file=mcf_par_file,
-            brainmask=brainmask,
-            output_tsv=confounds_work,
-            work_dir=safe_work_dir,
-        )
-        shutil.copy(confounds_work, confounds_final)
+        # --- Volumetric ---
+        print('\n  [Filter-only] High-pass filtering volumetric BOLD...')
 
-    print('  Confounds        : {}'.format(confounds_final))
+        filtered_vol_final = _final(
+            '{}_desc-filtered_bold'.format(base), ext='.nii.gz')
+        filtered_vol_work  = _work('bold_filtered.nii.gz')
 
-    # ------------------------------------------------------------------
-    # Step 4: PCA + SG high-pass filter
-    #         Output: sub-XX_ses-XX_task-XX_run-XX_desc-pca_confounds.tsv
-    # ------------------------------------------------------------------
-    print('\n  [Step 4] Computing PCA confounds...')
+        # if not check_skip(
+        #     {'filtered_vol': filtered_vol_final},
+        #     ow['filter_vol'],
+        #     'Filter-only: filter volume',
+        #     workdir_paths={'filtered_vol': filtered_vol_work},
+        # ):
+        #     filter_volume(
+        #         bold_file=bold_file,
+        #         output_nii=filtered_vol_work,
+        #         lf_filter=lf_filter,
+        #     )
+        #     shutil.copy(filtered_vol_work, filtered_vol_final)
 
-    pca_tsv_final = _final('{}_desc-pca_confounds'.format(base))
-    pca_tsv_work  = _work('pca_confounds.tsv')
+        print('  Filtered volume  : {}'.format(filtered_vol_final))
+        results['filtered_bold'] = filtered_vol_final
 
-    if not check_skip(
-        {'pca_tsv': pca_tsv_final},
-        ow['pca_confounds'],
-        'Step 4: PCA confounds',
-        workdir_paths={'pca_tsv': pca_tsv_work},
-    ):
-        compute_pca_confounds(
-            confounds_tsv=confounds_work,
-            output_tsv=pca_tsv_work,
-            tr=tr,
-            n_components=n_pca,
-            sg_window=sg_window,
-            sg_order=sg_order,
-        )
-        shutil.copy(pca_tsv_work, pca_tsv_final)
+        # --- Surface ---
+        print('\n  [Filter-only] High-pass filtering surface BOLD...')
 
-    print('  PCA confounds    : {}'.format(pca_tsv_final))
+        surf_outputs = {}
+        for hemi_key, surf_file, hemi_gifti in [
+            ('lh', surf_lh_file, 'L'),
+            ('rh', surf_rh_file, 'R'),
+        ]:
+            if surf_file is None or not Path(surf_file).exists():
+                print('  No surface file for {} — skipping.'.format(hemi_key))
+                surf_outputs[hemi_key] = None
+                continue
 
-    # ------------------------------------------------------------------
-    # Step 5a: Denoise volumetric BOLD → _desc-denoised_bold.nii.gz
-    # ------------------------------------------------------------------
-    print('\n  [Step 5a] Denoising volumetric BOLD...')
+            surf_name = '{}_space-fsnative_hemi-{}_desc-filtered_bold.func.gii'.format(
+                base, hemi_gifti)
+            filtered_surf_final = os.path.join(subject_output_dir, surf_name)
+            filtered_surf_work  = _work(
+                'bold_hemi-{}_filtered.func.gii'.format(hemi_gifti))
 
-    denoised_vol_final = _final(
-        '{}_desc-denoised_bold'.format(base), ext='.nii.gz')
-    denoised_vol_work  = _work('bold_denoised.nii.gz')
+            if not check_skip(
+                {'filtered_surf_{}'.format(hemi_key): filtered_surf_final},
+                ow['filter_surf'],
+                'Filter-only: filter surface ({})'.format(hemi_key),
+                workdir_paths={
+                    'filtered_surf_{}'.format(hemi_key): filtered_surf_work},
+            ):
+                filter_surface(
+                    gifti_file=surf_file,
+                    output_gifti=filtered_surf_work,
+                    lf_filter=lf_filter,
+                )
+                shutil.copy(filtered_surf_work, filtered_surf_final)
 
-    if not check_skip(
-        {'denoised_vol': denoised_vol_final},
-        ow['denoise_vol'],
-        'Step 5a: denoise volume',
-        workdir_paths={'denoised_vol': denoised_vol_work},
-    ):
-        denoise_volume(
-            bold_file=bold_file,
-            pca_confounds_tsv=pca_tsv_work,
-            output_nii=denoised_vol_work,
-            tr=tr,
-            sg_window=sg_window,
-            sg_order=sg_order,
-        )
-        shutil.copy(denoised_vol_work, denoised_vol_final)
+            surf_outputs[hemi_key] = filtered_surf_final
+            print('  Filtered surface ({}) : {}'.format(
+                hemi_key, filtered_surf_final))
 
-    print('  Denoised volume  : {}'.format(denoised_vol_final))
+        results['filtered_surf_lh'] = surf_outputs.get('lh')
+        results['filtered_surf_rh'] = surf_outputs.get('rh')
 
-    # ------------------------------------------------------------------
-    # Step 5b: Denoise surface projections (lh + rh)
-    # ------------------------------------------------------------------
-    print('\n  [Step 5b] Denoising surface BOLD...')
+    else:
+        # ------------------------------------------------------------------
+        # Full denoising mode (original pipeline)
+        # ------------------------------------------------------------------
 
-    surf_outputs = {}
+        # Steps 1-3: Extract fMRIprep noise + mcflirt motion → merged .tsv
+        print('\n  [Steps 1-3] Extracting and merging confounds...')
 
-    for hemi_key, surf_file, hemi_gifti in [
-        ('lh', surf_lh_file, 'L'),
-        ('rh', surf_rh_file, 'R'),
-    ]:
-        if surf_file is None or not Path(surf_file).exists():
-            print('  No surface file for {} — skipping.'.format(hemi_key))
-            surf_outputs[hemi_key] = None
-            continue
-
-        surf_name = '{}_space-fsnative_hemi-{}_desc-denoised_bold.func.gii'.format(
-            base, hemi_gifti)
-        denoised_surf_final = os.path.join(subject_output_dir, surf_name)
-        denoised_surf_work  = _work(
-            'bold_hemi-{}_denoised.func.gii'.format(hemi_gifti))
+        confounds_final = _final('{}_desc-confounds'.format(base))
+        confounds_work  = _work('confounds.tsv')
 
         if not check_skip(
-            {'denoised_surf_{}'.format(hemi_key): denoised_surf_final},
-            ow['denoise_surf'],
-            'Step 5b: denoise surface ({})'.format(hemi_key),
-            workdir_paths={
-                'denoised_surf_{}'.format(hemi_key): denoised_surf_work},
+            {'confounds_tsv': confounds_final},
+            ow['confounds'],
+            'Steps 1-3: build confounds',
+            workdir_paths={'confounds_tsv': confounds_work},
         ):
-            denoise_surface(
-                gifti_file=surf_file,
-                pca_confounds_tsv=pca_tsv_work,
-                output_gifti=denoised_surf_work,
-                tr=tr,
-                sg_window=sg_window,
-                sg_order=sg_order,
+            build_confounds_tsv(
+                fmriprep_confounds_tsv=fmriprep_confounds_tsv,
+                mcf_nii=bold_file,
+                mcf_par_file=mcf_par_file,
+                brainmask=brainmask,
+                output_tsv=confounds_work,
+                work_dir=safe_work_dir,
             )
-            shutil.copy(denoised_surf_work, denoised_surf_final)
+            shutil.copy(confounds_work, confounds_final)
 
-        surf_outputs[hemi_key] = denoised_surf_final
-        print('  Denoised surface ({}) : {}'.format(
-            hemi_key, denoised_surf_final))
+        print('  Confounds        : {}'.format(confounds_final))
+
+        # Step 4: PCA + SG high-pass filter
+        print('\n  [Step 4] Computing PCA confounds...')
+
+        pca_tsv_final = _final('{}_desc-pca_confounds'.format(base))
+        pca_tsv_work  = _work('pca_confounds.tsv')
+
+        if not check_skip(
+            {'pca_tsv': pca_tsv_final},
+            ow['pca_confounds'],
+            'Step 4: PCA confounds',
+            workdir_paths={'pca_tsv': pca_tsv_work},
+        ):
+            pca_denoiser = compute_pca_confounds(
+                confounds_tsv=confounds_work,
+                output_tsv=pca_tsv_work,
+                lf_filter=lf_filter,
+                ncomps=n_pca,
+            )
+            shutil.copy(pca_tsv_work, pca_tsv_final)
+        else:
+            full_conf = pd.read_csv(confounds_final, sep='\t', na_values='n/a')
+            pca_conf = pd.read_csv(pca_tsv_final, sep='\t', na_values='n/a')
+            pca_denoiser = PCA_denoiser(
+                confounds=full_conf,
+                lf_filter=lf_filter,
+                ncomps=n_pca,
+            )
+            pca_denoiser.pca_comps = pca_conf.to_numpy()
+            
+        print('  PCA confounds    : {}'.format(pca_tsv_final))
+
+        # Step 5a: Denoise volumetric BOLD
+        print('\n  [Step 5a] Denoising volumetric BOLD...')
+
+        denoised_vol_final = _final(
+            '{}_desc-denoised_bold'.format(base), ext='.nii.gz')
+        denoised_vol_work  = _work('bold_denoised.nii.gz')
+
+        if not check_skip(
+            {'denoised_vol': denoised_vol_final},
+            ow['denoise_vol'],
+            'Step 5a: denoise volume',
+            workdir_paths={'denoised_vol': denoised_vol_work},
+        ):
+            denoise_volume(
+                bold_file=bold_file,
+                pca_denoiser=pca_denoiser,
+                output_nii=denoised_vol_work,
+            )
+            shutil.copy(denoised_vol_work, denoised_vol_final)
+
+        print('  Denoised volume  : {}'.format(denoised_vol_final))
+
+        # Step 5b: Denoise surface projections (lh + rh)
+        print('\n  [Step 5b] Denoising surface BOLD...')
+
+        surf_outputs = {}
+
+        for hemi_key, surf_file, hemi_gifti in [
+            ('lh', surf_lh_file, 'L'),
+            ('rh', surf_rh_file, 'R'),
+        ]:
+            if surf_file is None or not Path(surf_file).exists():
+                print('  No surface file for {} — skipping.'.format(hemi_key))
+                surf_outputs[hemi_key] = None
+                continue
+
+            surf_name = '{}_space-fsnative_hemi-{}_desc-denoised_bold.func.gii'.format(
+                base, hemi_gifti)
+            denoised_surf_final = os.path.join(subject_output_dir, surf_name)
+            denoised_surf_work  = _work(
+                'bold_hemi-{}_denoised.func.gii'.format(hemi_gifti))
+
+            if not check_skip(
+                {'denoised_surf_{}'.format(hemi_key): denoised_surf_final},
+                ow['denoise_surf'],
+                'Step 5b: denoise surface ({})'.format(hemi_key),
+                workdir_paths={
+                    'denoised_surf_{}'.format(hemi_key): denoised_surf_work},
+            ):
+                denoise_surface(
+                    gifti_file=surf_file,
+                    pca_denoiser=pca_denoiser,
+                    output_gifti=denoised_surf_work,
+                )
+                shutil.copy(denoised_surf_work, denoised_surf_final)
+
+            surf_outputs[hemi_key] = denoised_surf_final
+            print('  Denoised surface ({}) : {}'.format(
+                hemi_key, denoised_surf_final))
+
+        results = {
+            'confounds':        confounds_final,
+            'pca_confounds':    pca_tsv_final,
+            'denoised_bold':    denoised_vol_final,
+            'denoised_surf_lh': surf_outputs.get('lh'),
+            'denoised_surf_rh': surf_outputs.get('rh'),
+        }
 
     shutil.rmtree(work_dir)
-
-    return {
-        'confounds':        confounds_final,
-        'pca_confounds':    pca_tsv_final,
-        'denoised_bold':    denoised_vol_final,
-        'denoised_surf_lh': surf_outputs.get('lh'),
-        'denoised_surf_rh': surf_outputs.get('rh'),
-    }
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -749,8 +762,10 @@ def run_pipeline(
     session: str = 'ses-01',
     n_pca: int = 6,
     sg_window: int = 120,
-    sg_order: int = 3,
+    sg_polyorder: int = 3,
+    sg_deriv: int = 0, 
     overwrite: dict = None,
+    filter_only: bool = False,
 ) -> dict:
     """
     Run the full confound extraction and denoising pipeline.
@@ -763,13 +778,21 @@ def run_pipeline(
       - Step 4: computes PCA confounds with SG high-pass filter
       - Step 5: denoises volumetric and surface BOLD
 
+    When filter_only=True:
+      - Steps 1-4 (confound extraction and PCA) are skipped entirely.
+      - Only the SG high-pass filter is applied (no confound regression).
+      - Outputs are saved as _desc-filtered_bold to distinguish them from
+        _desc-denoised_bold, allowing direct comparison of filter-only vs
+        full denoising.
+      - fMRIprep confounds .tsv and brainmask are NOT required in this mode.
+
     The moco_file directory is expected to contain:
       - *bold*.nii.gz           – motion-corrected BOLD volumes
-      - *mcflirt_motion*.par    – MCFLIRT .par files
+      - *mcflirt_motion*.par    – MCFLIRT .par files (not needed in filter_only mode)
       - *hemi-L*.func.gii       – left-hemisphere surface timeseries
       - *hemi-R*.func.gii       – right-hemisphere surface timeseries
 
-    fMRIprep derivatives (auto-located) must contain per run:
+    fMRIprep derivatives (auto-located) must contain per run (full mode only):
       - *desc-confounds_timeseries.tsv  – fMRIprep confounds
       - *desc-brain_mask.nii.gz         – brain mask (used for DVARS)
 
@@ -801,16 +824,21 @@ def run_pipeline(
 
     os.makedirs(subject_output_dir, exist_ok=True)
 
+    mode_label = 'Filter-only (SG high-pass, no confound regression)' \
+        if filter_only else 'Confound Extraction + Denoising'
+
     print('-' * 55)
-    print('Processing: Confound Extraction + Denoising')
+    print('Processing: {}'.format(mode_label))
     print('-' * 55)
     print(' Moco input  : {}'.format(moco_dir))
-    print(' fMRIprep    : {}'.format(fmriprep_dir))
+    if not filter_only:
+        print(' fMRIprep    : {}'.format(fmriprep_dir))
     print(' Output      : {}'.format(output_dir))
     print(' Subject     : {}'.format(subject))
     print(' Session     : {}'.format(session))
-    print(' PCA comps   : {}'.format(n_pca))
-    print(' SG window   : {}s (order {})'.format(sg_window, sg_order))
+    if not filter_only:
+        print(' PCA comps   : {}'.format(n_pca))
+    print(' SG window   : {}s (order {})'.format(sg_window, sg_polyorder))
     print('-' * 55)
 
     # ------------------------------------------------------------------
@@ -839,61 +867,68 @@ def run_pipeline(
         print('=' * 55)
 
         run_label, task_label = get_labels(bold_file)
-        base = _bold_base(bold_file, subject, session)
         parts = [subject, session]
         if task_label:
             parts.append(task_label)
         if run_label:
             parts.append(run_label)
 
-        # ------------------------------------------------------------------
-        # Locate matching MCFLIRT .par file
-        # ------------------------------------------------------------------
-        fallback_pat = os.path.join(
-            subject_input_dir,
-            '{}_*mcflirt*.par'.format('_'.join(parts)))
-        par_files = sorted(glob.glob(fallback_pat))
-        if not par_files:
-            raise FileNotFoundError(
-                'No MCFLIRT .par file found for {}'.format(
-                    os.path.basename(bold_file)))
+        # fMRIprep confounds + brainmask — only needed in full denoising mode
+        fmriprep_confounds_tsv = None
+        brainmask = None
+        mcf_par_file = None
 
-        mcf_par_file = par_files[0]
-        print('  BOLD  : {}'.format(bold_file))
-        print('  PAR   : {}'.format(mcf_par_file))
+        if not filter_only:
+            # ------------------------------------------------------------------
+            # Locate matching MCFLIRT .par file
+            # ------------------------------------------------------------------
+            fallback_pat = os.path.join(
+                subject_input_dir,
+                '{}_*mcflirt*.par'.format('_'.join(parts)))
+            par_files = sorted(glob.glob(fallback_pat))
+            if not par_files:
+                raise FileNotFoundError(
+                    'No MCFLIRT .par file found for {}'.format(
+                        os.path.basename(bold_file)))
 
-        # ------------------------------------------------------------------
-        # Locate fMRIprep confounds .tsv (Step 1 input)
-        # ------------------------------------------------------------------
-        fmriprep_conf_pattern = os.path.join(
-            subject_fmriprep_dir, 'func',
-            '{}*desc-confounds_timeseries.tsv'.format('_'.join(parts)))
-        fmriprep_conf_hits = sorted(glob.glob(fmriprep_conf_pattern))
+            mcf_par_file = par_files[0]
+            print('  BOLD  : {}'.format(bold_file))
+            print('  PAR   : {}'.format(mcf_par_file))
 
-        if not fmriprep_conf_hits:
-            raise FileNotFoundError(
-                'No fMRIprep confounds .tsv found for {}. Searched: {}'.format(
-                    os.path.basename(bold_file), fmriprep_conf_pattern))
+            # ------------------------------------------------------------------
+            # Locate fMRIprep confounds .tsv (Step 1 input)
+            # ------------------------------------------------------------------
+            fmriprep_conf_pattern = os.path.join(
+                subject_fmriprep_dir, 'func',
+                '{}*desc-confounds_timeseries.tsv'.format('_'.join(parts)))
+            fmriprep_conf_hits = sorted(glob.glob(fmriprep_conf_pattern))
 
-        fmriprep_confounds_tsv = fmriprep_conf_hits[0]
-        print('  FMRIPREP CONF: {}'.format(fmriprep_confounds_tsv))
+            if not fmriprep_conf_hits:
+                raise FileNotFoundError(
+                    'No fMRIprep confounds .tsv found for {}. Searched: {}'.format(
+                        os.path.basename(bold_file), fmriprep_conf_pattern))
 
-        # ------------------------------------------------------------------
-        # Locate fMRIprep brain mask (Step 2 input for DVARS)
-        # ------------------------------------------------------------------
-        brainmask_pattern = os.path.join(
-            subject_fmriprep_dir, 'func',
-            '{}*desc-brain_mask.nii.gz'.format('_'.join(parts))
-            )
-        brainmask_hits = sorted(glob.glob(brainmask_pattern))
+            fmriprep_confounds_tsv = fmriprep_conf_hits[0]
+            print('  FMRIPREP CONF: {}'.format(fmriprep_confounds_tsv))
 
-        if not brainmask_hits:
-            raise FileNotFoundError(
-                'No fMRIprep brain mask found for {}. Searched: {}'.format(
-                    os.path.basename(bold_file), brainmask_pattern))
+            # ------------------------------------------------------------------
+            # Locate fMRIprep brain mask (Step 2 input for DVARS)
+            # ------------------------------------------------------------------
+            brainmask_pattern = os.path.join(
+                subject_fmriprep_dir, 'func',
+                '{}*desc-brain_mask.nii.gz'.format('_'.join(parts))
+                )
+            brainmask_hits = sorted(glob.glob(brainmask_pattern))
 
-        brainmask = brainmask_hits[0]
-        print('  BRAINMASK    : {}'.format(brainmask))
+            if not brainmask_hits:
+                raise FileNotFoundError(
+                    'No fMRIprep brain mask found for {}. Searched: {}'.format(
+                        os.path.basename(bold_file), brainmask_pattern))
+
+            brainmask = brainmask_hits[0]
+            print('  BRAINMASK    : {}'.format(brainmask))
+        else:
+            print('  BOLD  : {}'.format(bold_file))
 
         # ------------------------------------------------------------------
         # Locate surface timeseries (optional)
@@ -934,8 +969,10 @@ def run_pipeline(
             subject_output_dir=subject_output_dir,
             n_pca=n_pca,
             sg_window=sg_window,
-            sg_order=sg_order,
+            sg_polyorder=sg_polyorder,
+            sg_deriv=sg_deriv,
             overwrite=ow,
+            filter_only=filter_only,
         )
 
         key = run_label if run_label else 'run-{:02d}'.format(run_idx)
@@ -979,8 +1016,22 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--sg-window', type=int, default=120,
                    help='Savitzky-Golay filter window length in SECONDS '
                         '(converted to volumes via TR internally)')
-    p.add_argument('--sg-order',  type=int, default=3,
+    p.add_argument('--sg-polyorder',  type=int, default=3,
                    help='Savitzky-Golay polynomial order')
+    p.add_argument('--sg-deriv',  type=int, default=0,
+                help='Savitzky-Golay polynomial order')
+    p.add_argument(
+        '--filter-only',
+        action='store_true',
+        default=False,
+        help=(
+            'Apply SG high-pass filter only — skip confound extraction and '
+            'PCA regression entirely. Outputs are saved as _desc-filtered_bold '
+            'so they can be compared directly against _desc-denoised_bold to '
+            'isolate how much improvement comes from filtering vs denoising. '
+            'Does not require fMRIprep confounds .tsv or brain mask.'
+        ),
+    )
 
     ow_group = p.add_argument_group(
         'overwrite options',
@@ -1023,8 +1074,10 @@ def main():
         session=args.ses,
         n_pca=args.n_pca,
         sg_window=args.sg_window,
-        sg_order=args.sg_order,
+        sg_polyorder=args.sg_polyorder,
+        sg_deriv=args.sg_deriv,
         overwrite=overwrite,
+        filter_only=args.filter_only,
     )
 
 
