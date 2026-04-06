@@ -1,0 +1,53 @@
+# It is good practice when running analyses to save various settings outside the scripts, and call them in.
+# Each time you run an analysis, save a copy of the .yml file used to run it. That way you can be sure what settings you used, even if you change them over time.
+# ***** APPLIES TO ALL MODELS *****
+# -> hrf information
+hrf:
+  pars: [1,1,0]         # Default parameters 
+  deriv_bound: [0,10]   # If fitting the HRF these are the bounds (for hrf[1])
+  disp_bound: [0,0]     # Generally advised to fix the dispersion value. Messing with this can get complex as you risk confounding inhibitory components 
+
+# -> Generic fitting information
+xtol: 1e-4 #fitting tolerance
+ftol: 1e-4
+grid_nr: 20         #number of items in grid
+rsq_threshold: 0.01 # 
+#
+TR: 1
+#
+filter_predictions : False # Other options to do filtering...
+n_jobs : 4 # For paralellisation, how many jobs to split off into
+n_batches : 10 # For paralellisation at grid stage...
+# ***** APPLIES TO PRF MODELS *****
+
+# screen settings
+# 43.2x27cm, viewing distance = 34cm
+screen_size_cm: 27
+screen_distance_cm: 34
+#unit volume RFs
+normalize_RFs: False
+
+#DM size in pixels (n_pix x n_pix) (has to be divisor of 1080)
+n_pix: 100
+eps: 1e-1
+
+fixed_grid_baseline : 0
+# set prf amplitude
+bold_bsl: [-10,10]
+prf_ampl: [0,1000]
+
+norm:
+  surround_amplitude_grid: [0.05,0.2,0.4,0.7,1,3]
+  surround_size_grid: [5,8,12,18]
+  neural_baseline_grid: [0,1,10,100]
+  surround_baseline_grid: [0.1,1.0,10.0,100.0] # [1]
+  surround_amplitude_bound: [0,1000]
+  neural_baseline_bound: [0,1000]
+  surround_baseline_bound: [0.000001,1000] # [1]
+
+
+#Constraints
+constraints : False # Determines which fitter is used. None is fastere (lGBFS), than [] (trust-constrained)
+
+
+save_grids : True # Save the outputs of the grid stage?
