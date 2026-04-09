@@ -92,7 +92,7 @@ echo "  Task:                 ${TASK:-<all>}"
 echo "  No-qsub mode:         $NO_QSUB"
 echo "  Forwarded args:       ${EXTRA_ARGS[*]:-<none>}"
 echo "-------------------------------------------------------"
-exit 1
+
 # --- Build job metadata ---
 TASK_SUFFIX="${TASK:+_task-${TASK}}"
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
@@ -132,8 +132,6 @@ else
             -pe smp 1 \
             -j  n \
             ${RUNNER_SCRIPT}"
-
-    echo "$QSUB_CMD"
 
     if [[ "${PC_LOCATION}" == "local" ]]; then
         JOB_ID=$(ssh "$REMOTE_HOST" "$QSUB_CMD" | awk '{print $3}')
