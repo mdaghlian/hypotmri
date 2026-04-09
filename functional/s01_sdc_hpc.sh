@@ -129,7 +129,7 @@ else
             -e  '${LOG_ERR}' \
             -l  h_rt=1:00:00 \
             -l  mem=16G \
-            -pe smp 1 \
+            -pe smp 8 \
             -j  n \
             ${RUNNER_SCRIPT}"
 

@@ -71,14 +71,41 @@ def _gunzip_to(src: str, dst: str) -> None:
 
 def _container_path(work_dir: str, filename: str, docker: str) -> str:
     """
-    Return the path to *filename* as seen from inside the execution context:
-    /data/<filename> for Docker, work_dir/<filename> for local.
-    Handles empty filename (returns mount root).
-    """
-    if docker and docker != 'local':
-        return '/data/{}'.format(filename).rstrip('/') if filename else '/data'
-    return os.path.join(work_dir, filename) if filename else work_dir
+    Resolve the path to `filename` depending on execution context.
 
+    - In Docker: files are accessed under /data
+    - Locally: files are accessed under `work_dir`
+
+    Behavior:
+    - If `filename` is empty → return root mount (/data or work_dir)
+    - If `filename` is an absolute path → return as-is (local) or remap (Docker)
+    - If `filename` is relative → join with appropriate base
+    """
+
+    is_docker = docker and docker != "local"
+
+    # Handle empty filename
+    if not filename:
+        return "/data" if is_docker else work_dir
+
+    # Normalize path
+    filename = os.path.normpath(filename)
+
+    # If filename is absolute
+    if os.path.isabs(filename):
+        if is_docker:
+            # Remap work_dir → /data if applicable
+            if filename.startswith(work_dir):
+                return filename.replace(work_dir, "/data", 1)
+            return filename  # already absolute, leave unchanged
+        else:
+            return filename
+
+    # If filename is relative
+    if is_docker:
+        return os.path.join("/data", filename)
+    else:
+        return os.path.join(work_dir, filename)
 
 def make_safe_workdir(work_dir: str) -> str:
     """
