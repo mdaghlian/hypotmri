@@ -57,6 +57,7 @@ from cvl_utils.preproc_func import (
     get_nvols,
     _gunzip_to, 
     _container_path,
+    _stage
 )
 
 STEP_KEYS = [
@@ -85,6 +86,7 @@ def convert_to_afni(
     Convert *nifti_path* to AFNI +orig format in *work_dir*.
     Returns the host path to <out_prefix>+orig.HEAD.
     """
+    # --- Handle input ---
     if nifti_path.endswith('.gz'):
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
         _gunzip_to(nifti_path, tmp_nii)
@@ -95,6 +97,15 @@ def convert_to_afni(
             shutil.copy(nifti_path, dest)
         src = _container_path(work_dir, os.path.basename(nifti_path), afni_docker)
 
+    # --- Remove existing AFNI dataset if present ---
+    head = Path(work_dir) / f"{out_prefix}+orig.HEAD"
+    brik = Path(work_dir) / f"{out_prefix}+orig.BRIK"
+
+    for f in (head, brik):
+        if f.exists():
+            f.unlink()
+
+    # --- Run conversion ---
     dst = _container_path(work_dir, out_prefix, afni_docker)
     run_cmd(
         work_dir=work_dir,
@@ -102,13 +113,13 @@ def convert_to_afni(
         cmd=['3dcopy', src, dst],
     )
 
+    # --- Cleanup temp ---
     if nifti_path.endswith('.gz'):
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
         if Path(tmp_nii).exists():
             os.remove(tmp_nii)
 
-    return os.path.join(work_dir, out_prefix + '+orig.HEAD')
-
+    return str(head)
 
 def run_unwarp(
     work_dir: str,
@@ -158,25 +169,25 @@ def run_unwarp(
 
 def apply_warp_to_sbref(
     sbref_path: str,
-    warp_file: str,
+    warp_file: str,          # caller should pass *_Forward_WARP.nii.gz explicitly
+    master_path: str,        # e.g. 03_TS_MidWarped_Forward.nii.gz
+    calib_forward_afni: str, # e.g. 'TS_calibForwardData+orig' for 3drefit
     work_dir: str,
     afni_docker: str,
 ) -> str:
-    """
-    Convert SBREF to AFNI format and apply warp via 3dNwarpApply.
-    Returns host path to work_dir/sdc_sbref.nii.gz.
-    """
-    convert_to_afni(
-        nifti_path=sbref_path,
-        out_prefix='sbref',
-        work_dir=work_dir,
-        afni_docker=afni_docker,
-    )
+    convert_to_afni(sbref_path, 'sbref', work_dir, afni_docker)
 
     warp_dst = os.path.join(work_dir, os.path.basename(warp_file))
     if str(Path(warp_file).resolve()) != str(Path(warp_dst).resolve()):
         shutil.copy(warp_file, warp_dst)
 
+    sdc_sbref = os.path.join(work_dir, 'sdc_sbref.nii.gz')
+    if os.path.exists(sdc_sbref):
+        os.unlink(sdc_sbref)
+    
+    _stage(warp_file, work_dir)
+    _stage(master_path, work_dir)
+    
     run_cmd(
         work_dir=work_dir,
         docker_image=afni_docker,
@@ -184,13 +195,26 @@ def apply_warp_to_sbref(
             '3dNwarpApply',
             '-source', _container_path(work_dir, 'sbref+orig', afni_docker),
             '-nwarp',  _container_path(work_dir, os.path.basename(warp_file), afni_docker),
+            '-master', _container_path(work_dir, os.path.basename(master_path), afni_docker),
+            '-interp', 'wsinc5',
             '-prefix', _container_path(work_dir, 'sdc_sbref.nii.gz', afni_docker),
-        ],
+        ]
     )
 
-    return os.path.join(work_dir, 'sdc_sbref.nii.gz')
+    # Match unWarpEPIfloat.py: restore obliquity from the *forward calibration*
+    # reference space, not from the original distorted sbref
+    run_cmd(
+        work_dir=work_dir,
+        docker_image=afni_docker,
+        cmd=[
+            '3drefit',
+            '-atrcopy', _container_path(work_dir, calib_forward_afni, afni_docker),
+            'IJK_TO_DICOM_REAL',
+            _container_path(work_dir, 'sdc_sbref.nii.gz', afni_docker),
+        ]
+    )
 
-
+    return sdc_sbref
 # ---------------------------------------------------------------------------
 # Per-run pipeline
 # ---------------------------------------------------------------------------
@@ -301,6 +325,9 @@ def process_run(
             afni_docker=afni_docker,
         )
         shutil.copy(unwarp_nii, unwarp_out)
+    else:
+        unwarp_nii = glob.glob(os.path.join(
+            safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID), '06_*_HWV.nii.gz'))[0]
 
     print('    -> {}'.format(unwarp_out))
 
@@ -309,17 +336,25 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 4] Applying warp to SBREF...')
 
-    sdc_sbref = _out('{}_sdc_sbref'.format(run_suffix))
+    sdc_sbref = _out('{}_sdc_sbref'.format(run_suffix)) # output sdc sbref
 
-    warp_matches = glob.glob(os.path.join(
-        safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID), '*_WARP.nii.gz'))
-
+    # - find the correct warp file from previous step
+    fwd_warp_matches = glob.glob(os.path.join(
+        safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID),
+        '*_Forward_WARP.nii.gz'))[0]
+    
+    # - to calibrate the geomtry afterwards
+    calib_forward_afni = glob.glob(os.path.join(
+        safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID),
+        'TS_calibForwardData+orig'))[0]
     if not check_skip({'sdc_sbref': sdc_sbref}, ow['apply_warp_sbref'],
-                      'Step 4: apply warp to SBREF'):
-        if warp_matches:
+                    'Step 4: apply warp to SBREF'):
+        if fwd_warp_matches:
             result = apply_warp_to_sbref(
                 sbref_path=sbref_path,
-                warp_file=warp_matches[0],
+                warp_file=fwd_warp_matches,
+                master_path=unwarp_nii, # - use the output as the reference
+                calib_forward_afni=calib_forward_afni, # - use to set the correct geometry after
                 work_dir=safe_work_dir,
                 afni_docker=afni_docker,
             )

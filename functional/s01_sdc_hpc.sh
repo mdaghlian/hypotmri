@@ -3,33 +3,36 @@ set -e
 
 # --- Usage Function ---
 usage() {
-    echo "Usage: $0 --bids-dir <path> --output-file <string> --sub <sub> --ses <ses>"
+    echo "Usage: $0 --bids-dir <path> --output-file <string> --sub <sub> --ses <ses> [options] [-- extra args]"
     echo ""
     echo "Required Arguments:"
     echo "  --bids-dir      Path to local BIDS directory"
     echo "  --output-file   output file, placed in BID_DIR/derivatives"
-    echo "  --sub           Subject label (e.g., sub-01)"
-    echo "  --ses           Session label (e.g., ses-01)"
+    echo "  --sub           Subject label (e.g., sub-01 or 01)"
+    echo "  --ses           Session label (e.g., ses-01 or 01)"
     echo ""
     echo "Optional Arguments:"
     echo "  --task          Task label (default: empty, matches all tasks)"
     echo "  --no-qsub       Run the pipeline script directly (no job submission)"
     echo "  --skip-sync     Skip rsync step (assumes data is already on cluster)"
     echo "  --help          Display this help message"
+    echo ""
+    echo "Any arguments after '--' are forwarded directly to s01_sdc_AFNI.py"
     exit 1
 }
 
 # --- SCRIPT OVERVIEW ---
 # [1] Rsync raw func + fmap data to cluster (if running from local)
-# [2] qsub s01_sdc_AFNI.py
-#     - If local: submitted via ssh to REMOTE_HOST
-#     - If HPC:   submitted directly via qsub
+# [2] qsub s01_sdc_AFNI.py (or run directly)
 # --- --- --- --- ---
 
-# --- Parse Arguments ---
+# --- Defaults ---
 NO_QSUB=false
 SKIP_SYNC=false
 TASK=""
+EXTRA_ARGS=()
+
+# --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids-dir)         BIDS_DIR="$2";   shift 2 ;;
@@ -37,33 +40,35 @@ while [[ $# -gt 0 ]]; do
         --sub)              SUBJECT="$2";    shift 2 ;;
         --ses)              SESSION="$2";    shift 2 ;;
         --task)             TASK="$2";       shift 2 ;;
-        --no-qsub)          NO_QSUB=true;   shift ;;
-        --skip-sync)        SKIP_SYNC=true; shift ;;
+        --no-qsub)          NO_QSUB=true;     shift ;;
+        --skip-sync)        SKIP_SYNC=true;   shift ;;
         --help)             usage ;;
-        *)                  echo "Unknown argument: $1"; usage ;;
+        --)                 shift; EXTRA_ARGS+=("$@"); break ;;
+        *)                  EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
 
-# -> make subject & session labels robust
+# --- Normalize subject/session labels ---
 SUBJECT="sub-${SUBJECT#sub-}"
 SESSION="ses-${SESSION#ses-}"
 
 # --- Validate ---
-[[ -z "$BIDS_DIR" ]]    && echo "Error: --bids-dir required"    && usage
+[[ -z "$BIDS_DIR" ]]     && echo "Error: --bids-dir required"     && usage
 [[ -z "$OUTPUT_FILE" ]]  && echo "Error: --output-file required"  && usage
-[[ -z "$SUBJECT" ]]     && echo "Error: --sub required"         && usage
-[[ -z "$SESSION" ]]     && echo "Error: --ses required"         && usage
+[[ -z "$SUBJECT" ]]      && echo "Error: --sub required"          && usage
+[[ -z "$SESSION" ]]      && echo "Error: --ses required"          && usage
 
 # --- Resolve paths depending on where we're running ---
 if [[ "${PC_LOCATION}" == "local" ]]; then
-    [[ -z "$REMOTE_BIDS_DIR" ]]   && echo "Error: \$REMOTE_BIDS_DIR not set in environment"   && exit 1
+    [[ -z "$REMOTE_BIDS_DIR" ]] && echo "Error: \$REMOTE_BIDS_DIR not set" && exit 1
     REMOTE_HOST="${REMOTE_BIDS_DIR%%:*}"
     SUBMIT_BIDS_DIR="${REMOTE_BIDS_DIR#*:}"
 else
     REMOTE_HOST=""
     SUBMIT_BIDS_DIR="$BIDS_DIR"
 fi
-# --- Rsync func + fmap data to cluster (local only) ---
+
+# --- Rsync (local only) ---
 if [[ "${PC_LOCATION}" == "local" ]] && [[ "$SKIP_SYNC" != true ]]; then
     echo "Rsyncing func/fmap data to cluster + freesurfer"
     bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_to_hpc.sh" \
@@ -81,61 +86,39 @@ fi
 echo "-------------------------------------------------------"
 echo "Running SDC (AFNI method)"
 echo "-------------------------------------------------------"
-if [[ "${PC_LOCATION}" == "local" ]]; then
-    echo "  Running from:         local"
-    echo "  BIDS DIR (local):     $BIDS_DIR"
-    echo "  BIDS DIR (remote):    $REMOTE_BIDS_DIR"
-else
-    echo "  Running from:         HPC (direct qsub)"
-    echo "  BIDS DIR:             $BIDS_DIR"
-fi
 echo "  Subject:              $SUBJECT"
 echo "  Session:              $SESSION"
 echo "  Task:                 ${TASK:-<all>}"
 echo "  No-qsub mode:         $NO_QSUB"
+echo "  Forwarded args:       ${EXTRA_ARGS[*]:-<none>}"
 echo "-------------------------------------------------------"
-
-# --- Build task suffix for job naming (safe even if TASK is empty) ---
+exit 1
+# --- Build job metadata ---
 TASK_SUFFIX="${TASK:+_task-${TASK}}"
-
-# [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
 JOB_NAME="sdc_afni_${SUBJECT}_${SESSION}${TASK_SUFFIX}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
-# Build optional --task flag (omit entirely if TASK is empty)
-TASK_ARG="${TASK:+--task '${TASK}'}"
-
+# --- Runner script ---
 RUNNER_SCRIPT="~/pipeline/functional/s01_sdc_AFNI.py \
     --bids-dir    '${SUBMIT_BIDS_DIR}' \
     --output-file '${OUTPUT_FILE}' \
     --sub         '${SUBJECT}' \
     --ses         '${SESSION}' \
-    --task        '${TASK}' \
-    --afni-docker '${AFNI_SIF}'"
+    ${TASK:+--task '${TASK}'} \
+    --afni-docker '${AFNI_SIF}' \
+    ${EXTRA_ARGS[*]}"
 
-
+# --- Run or submit ---
 if [[ "$NO_QSUB" == true ]]; then
-    echo "-------------------------------------------------------"
     echo "Running SDC AFNI directly (no qsub)"
-    echo "  Subject:  $SUBJECT"
-    echo "  Session:  $SESSION"
-    echo "  Task:     ${TASK:-<all>}"
-    echo "-------------------------------------------------------"
     if [[ "${PC_LOCATION}" == "local" ]]; then
         ssh "$REMOTE_HOST" "$RUNNER_SCRIPT"
     else
         eval "$RUNNER_SCRIPT"
     fi
 else
-    echo "-------------------------------------------------------"
-    echo "Submitting SDC AFNI job"
-    echo "  Subject:  $SUBJECT"
-    echo "  Session:  $SESSION"
-    echo "  Task:     ${TASK:-<all>}"
-    echo "  Logs:     ${REMOTE_HOST:+${REMOTE_HOST}:}${LOG_OUT}"
-    echo "-------------------------------------------------------"
     QSUB_CMD="source ~/.bash_profile; \
         source set_project.sh ${PROJ_NAME}; \
         mkdir -p '${REMOTE_LOG_DIR}'; \
@@ -149,8 +132,9 @@ else
             -pe smp 1 \
             -j  n \
             ${RUNNER_SCRIPT}"
+
     echo "$QSUB_CMD"
-    
+
     if [[ "${PC_LOCATION}" == "local" ]]; then
         JOB_ID=$(ssh "$REMOTE_HOST" "$QSUB_CMD" | awk '{print $3}')
     else

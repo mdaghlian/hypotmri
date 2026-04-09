@@ -372,6 +372,7 @@ def check_skip(
     overwrite: bool,
     step_label: str,
     workdir_paths: dict = None,
+    force_skip: bool = False,
 ) -> bool:
     """
     Return True (skip this step) when all *outdir_paths* exist and
@@ -382,7 +383,11 @@ def check_skip(
     """
     if overwrite:
         return False
-
+    
+    if force_skip:
+        print('  Argument --skip {}, so skipping  '.format(step_label))
+        return True
+    
     all_exist = all(Path(p).exists() for p in outdir_paths.values())
     if not all_exist:
         return False
