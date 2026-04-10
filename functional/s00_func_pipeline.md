@@ -53,6 +53,34 @@ s02_coreg_hpc.sh --sub hp01 --ses 01 \
     --output-file s2_coreg \
     --bids-dir $BIDS_DIR
 ```
+You can also submit runs & tasks separately - if you want to break it into smaller stages up
+```bash
+# Local
+s02_coreg.py --sub hp01 --ses 01 \
+    --input-file s1_AFNI_sdc \
+    --output-file s2_coreg \
+    --bids-dir $BIDS_DIR \
+    --task pRFLE --run 1
+
+# Cluster
+# Arguments after " -- " are passed to s02_coreg.py
+s02_coreg_hpc.sh --sub hp01 --ses 01 \
+    --input-file s1_AFNI_sdc \
+    --output-file s2_coreg \
+    --bids-dir $BIDS_DIR \
+    -- --task pRFLE --run 1
+
+
+# you can loop over a submmission job like this
+for TASK in "CSFRE" "pRFLE" "pRFRE"; do
+    s02_coreg_hpc.sh --sub hp01 --ses 01 \
+        --input-file s1_AFNI_sdc \
+        --output-file s2_coreg \
+        --bids-dir $BIDS_DIR \
+        --skip-sync \
+        -- --task $TASK
+done
+```
 
 ## [3] fmriprep (for confounds)
 Locally 

@@ -26,6 +26,12 @@ Overwrite behaviour
 Existence is checked against final BIDS-named files in *output_dir*.
 Skipped steps restore outputs to *work_dir* so downstream steps can proceed.
 
+Skip behaviour
+--------------
+Steps can be force-skipped with --skip regardless of whether their outputs
+exist. No files are touched and no outputs are restored to work_dir.
+Downstream steps continue regardless — caller is responsible for dependencies.
+
 Arguments:
     --bids-dir      BIDS directory containing input and output derivatives
     --moco-file     derivatives/<dir> with moco-files (and the .par files)
@@ -56,6 +62,15 @@ python s04_confounds.py \\
     --sub 01 \\
     --ses 01 \\
     --filter-only
+
+# Skip specific steps (hard skip — no file checks, no work_dir restore):
+python s04_confounds.py \\
+    --bids-dir /path/to/bids_dir \\
+    --moco-file s03_motion_correction \\
+    --output-file s04_motion_confounds \\
+    --sub 01 \\
+    --ses 01 \\
+    --skip denoise_surf filter_surf
 """
 
 import argparse
@@ -271,6 +286,7 @@ def build_confounds_tsv(
     )
     merged.to_csv(output_tsv, sep='\t', index=False, na_rep='n/a')
     print('  Confounds ({} columns) -> {}'.format(len(merged.columns), output_tsv))
+    return merged
 
 
 def compute_pca_confounds(
@@ -504,6 +520,7 @@ def process_run(
     sg_polyorder: int,
     sg_deriv: int,
     overwrite: dict,
+    skip: dict,
     filter_only: bool = False,
 ) -> dict:
     """
@@ -519,10 +536,21 @@ def process_run(
     only the SG high-pass filter (no regression), saving outputs as
     _desc-filtered_bold instead of _desc-denoised_bold.
 
+    Parameters
+    ----------
+    overwrite : dict mapping step key → bool; True forces re-run even if
+                outputs exist.
+    skip      : dict mapping step key → bool; True hard-skips the step with
+                no file checks and no work_dir restore. Downstream steps
+                continue regardless — caller is responsible for dependencies.
+
     Returns a dict of final output paths for this run.
     """
     ow = {k: False for k in STEP_KEYS}
     ow.update(overwrite)
+
+    sk = {k: False for k in STEP_KEYS}
+    sk.update(skip)
 
     run_label, task_label = get_labels(bold_file)
     run_suffix = '_'.join(t for t in [task_label, run_label] if t)
@@ -562,18 +590,19 @@ def process_run(
             '{}_desc-filtered_bold'.format(base), ext='.nii.gz')
         filtered_vol_work  = _work('bold_filtered.nii.gz')
 
-        # if not check_skip(
-        #     {'filtered_vol': filtered_vol_final},
-        #     ow['filter_vol'],
-        #     'Filter-only: filter volume',
-        #     workdir_paths={'filtered_vol': filtered_vol_work},
-        # ):
-        #     filter_volume(
-        #         bold_file=bold_file,
-        #         output_nii=filtered_vol_work,
-        #         lf_filter=lf_filter,
-        #     )
-        #     shutil.copy(filtered_vol_work, filtered_vol_final)
+        if not check_skip(
+            {'filtered_vol': filtered_vol_final},
+            ow['filter_vol'],
+            'Filter-only: filter volume',
+            workdir_paths={'filtered_vol': filtered_vol_work},
+            force_skip=sk['filter_vol'],
+        ):
+            filter_volume(
+                bold_file=bold_file,
+                output_nii=filtered_vol_work,
+                lf_filter=lf_filter,
+            )
+            shutil.copy(filtered_vol_work, filtered_vol_final)
 
         print('  Filtered volume  : {}'.format(filtered_vol_final))
         results['filtered_bold'] = filtered_vol_final
@@ -603,6 +632,7 @@ def process_run(
                 'Filter-only: filter surface ({})'.format(hemi_key),
                 workdir_paths={
                     'filtered_surf_{}'.format(hemi_key): filtered_surf_work},
+                force_skip=sk['filter_surf'],
             ):
                 filter_surface(
                     gifti_file=surf_file,
@@ -634,6 +664,7 @@ def process_run(
             ow['confounds'],
             'Steps 1-3: build confounds',
             workdir_paths={'confounds_tsv': confounds_work},
+            force_skip=sk['confounds'],
         ):
             build_confounds_tsv(
                 fmriprep_confounds_tsv=fmriprep_confounds_tsv,
@@ -658,6 +689,7 @@ def process_run(
             ow['pca_confounds'],
             'Step 4: PCA confounds',
             workdir_paths={'pca_tsv': pca_tsv_work},
+            force_skip=sk['pca_confounds'],
         ):
             pca_denoiser = compute_pca_confounds(
                 confounds_tsv=confounds_work,
@@ -690,6 +722,7 @@ def process_run(
             ow['denoise_vol'],
             'Step 5a: denoise volume',
             workdir_paths={'denoised_vol': denoised_vol_work},
+            force_skip=sk['denoise_vol'],
         ):
             denoise_volume(
                 bold_file=bold_file,
@@ -726,6 +759,7 @@ def process_run(
                 'Step 5b: denoise surface ({})'.format(hemi_key),
                 workdir_paths={
                     'denoised_surf_{}'.format(hemi_key): denoised_surf_work},
+                force_skip=sk['denoise_surf'],
             ):
                 denoise_surface(
                     gifti_file=surf_file,
@@ -765,6 +799,7 @@ def run_pipeline(
     sg_polyorder: int = 3,
     sg_deriv: int = 0, 
     overwrite: dict = None,
+    skip: dict = None,
     filter_only: bool = False,
 ) -> dict:
     """
@@ -796,6 +831,15 @@ def run_pipeline(
       - *desc-confounds_timeseries.tsv  – fMRIprep confounds
       - *desc-brain_mask.nii.gz         – brain mask (used for DVARS)
 
+    Parameters
+    ----------
+    overwrite : dict mapping step key → bool; True forces re-run of that step
+                even if outputs already exist. Valid keys: STEP_KEYS.
+    skip      : dict mapping step key → bool; True hard-skips that step with
+                no file checks and no work_dir restore. Downstream steps
+                continue regardless — caller is responsible for dependencies.
+                Valid keys: STEP_KEYS.
+
     Returns a dict mapping run keys → per-run output dicts.
     """
     ow = {k: False for k in STEP_KEYS}
@@ -807,6 +851,16 @@ def run_pipeline(
                     sorted(unknown), STEP_KEYS)
             )
         ow.update(overwrite)
+
+    sk = {k: False for k in STEP_KEYS}
+    if skip:
+        unknown = set(skip) - set(STEP_KEYS)
+        if unknown:
+            raise ValueError(
+                'Unknown skip key(s): {}.  Valid keys: {}'.format(
+                    sorted(unknown), STEP_KEYS)
+            )
+        sk.update(skip)
 
     moco_dir     = str(Path(
         os.path.join(bids_dir, 'derivatives', moco_file)
@@ -839,6 +893,9 @@ def run_pipeline(
     if not filter_only:
         print(' PCA comps   : {}'.format(n_pca))
     print(' SG window   : {}s (order {})'.format(sg_window, sg_polyorder))
+    skipped_steps = [k for k, v in sk.items() if v]
+    if skipped_steps:
+        print(' Force-skip  : {}'.format(', '.join(skipped_steps)))
     print('-' * 55)
 
     # ------------------------------------------------------------------
@@ -972,6 +1029,7 @@ def run_pipeline(
             sg_polyorder=sg_polyorder,
             sg_deriv=sg_deriv,
             overwrite=ow,
+            skip=sk,
             filter_only=filter_only,
         )
 
@@ -1013,13 +1071,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Session label (e.g. ses-01)')
     p.add_argument('--n-pca',     type=int, default=6,
                    help='Number of PCA components to retain')
-    p.add_argument('--sg-window', type=int, default=120,
+    p.add_argument('--sg-window', type=int, default=347,
                    help='Savitzky-Golay filter window length in SECONDS '
                         '(converted to volumes via TR internally)')
     p.add_argument('--sg-polyorder',  type=int, default=3,
                    help='Savitzky-Golay polynomial order')
     p.add_argument('--sg-deriv',  type=int, default=0,
                 help='Savitzky-Golay polynomial order')
+    
     p.add_argument(
         '--filter-only',
         action='store_true',
@@ -1034,7 +1093,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     ow_group = p.add_argument_group(
-        'overwrite options',
+        'overwrite / skip options',
         'Valid step names: ' + ', '.join(STEP_KEYS),
     )
     ow_group.add_argument(
@@ -1051,6 +1110,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help='Force re-run for all steps.',
     )
+    ow_group.add_argument(
+        '--skip',
+        nargs='+',
+        metavar='STEP',
+        default=[],
+        choices=STEP_KEYS,
+        help=(
+            'Hard-skip one or more named steps — no file checks, no work_dir '
+            'restore. Useful for omitting optional steps (e.g. denoise_surf). '
+            'Downstream steps continue regardless; caller is responsible for '
+            'any missing dependencies.'
+        ),
+    )
 
     return p
 
@@ -1062,6 +1134,8 @@ def main():
         overwrite = {k: True for k in STEP_KEYS}
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
+
+    skip = {k: (k in args.skip) for k in STEP_KEYS}
 
     args.sub = 'sub-' + args.sub.removeprefix('sub-')
     args.ses = 'ses-' + args.ses.removeprefix('ses-')
@@ -1077,6 +1151,7 @@ def main():
         sg_polyorder=args.sg_polyorder,
         sg_deriv=args.sg_deriv,
         overwrite=overwrite,
+        skip=skip,
         filter_only=args.filter_only,
     )
 

@@ -15,6 +15,7 @@ usage() {
     echo "Optional Arguments:"
     echo "  --skip-sync     Skip rsync step (assumes data is already on cluster)"
     echo "  --help          Display this help message"
+    echo "Any arguments after '--' are forwarded directly to s02_coreg.py"
     exit 1
 }
 
@@ -27,7 +28,7 @@ usage() {
 
 # --- Parse Arguments ---
 SKIP_SYNC=false
-TASK=""
+EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids-dir)         BIDS_DIR="$2";   shift 2 ;;
@@ -37,13 +38,26 @@ while [[ $# -gt 0 ]]; do
         --ses)              SESSION="$2";    shift 2 ;;
         --skip-sync)        SKIP_SYNC=true; shift ;;
         --help)             usage ;;
-        *)                  echo "Unknown argument: $1"; usage ;;
+        --)  shift; EXTRA_ARGS+=("$@"); break ;;
+        *)   EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
 
 # -> make subject & session labels robust
 SUBJECT="sub-${SUBJECT#sub-}"
 SESSION="ses-${SESSION#ses-}"
+
+# --- Extract --task --run from EXTRA_ARGS ---
+# not strictly needed here, but helpful nice for job naming 
+TASK="" 
+RUN=""
+for ((i=0; i<${#EXTRA_ARGS[@]}; i++)); do
+    if [[ "${EXTRA_ARGS[$i]}" == "--task" ]]; then
+        TASK="task-${EXTRA_ARGS[$((i+1))]}"
+    elif [[ "${EXTRA_ARGS[$i]}" == "--run" ]]; then
+        RUN="run-${EXTRA_ARGS[$((i+1))]}"
+    fi
+done
 
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]]    && echo "Error: --bids-dir required"    && usage
@@ -95,11 +109,12 @@ else
 fi
 echo "  Subject:              $SUBJECT"
 echo "  Session:              $SESSION"
+echo "  Forwarded args:       ${EXTRA_ARGS[*]:-<none>}"
 echo "-------------------------------------------------------"
 
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_NAME="moco_${SUBJECT}_${SESSION}"
+JOB_NAME="moco_${SUBJECT}_${SESSION}${TASK}${RUN}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
@@ -111,8 +126,8 @@ RUNNER_SCRIPT="~/pipeline/functional/s02_coreg.py \
     --output-file '${OUTPUT_FILE}' \
     --sub         '${SUBJECT}' \
     --ses         '${SESSION}' \
-    --docker      '${FSL_FREESURFER_SIF}'"
-
+    --docker      '${FSL_FREESURFER_SIF}' \
+    ${EXTRA_ARGS[*]}"   
 echo "-------------------------------------------------------"
 echo "Submitting COREGISTRATION job"
 echo "  Subject:  $SUBJECT"
@@ -129,7 +144,7 @@ QSUB_CMD="source ~/.bash_profile; \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
         -l  h_rt=2:00:00 \
-        -l  mem=16G \
+        -l  mem=8G \
         -pe smp 8 \
         -j  n \
         ${RUNNER_SCRIPT}"

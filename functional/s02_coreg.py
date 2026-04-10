@@ -31,6 +31,7 @@ python s02_coreg.py \\
 import argparse
 import glob
 import os
+opj = os.path.join
 import re
 import shutil
 import subprocess
@@ -85,7 +86,7 @@ def make_bref_master(
 
     Returns the host path to BREF_MASTER.nii.gz.
     """
-    pattern = os.path.join(
+    pattern = opj(
         subject_input_dir, '{}_{}*sbref*.nii*'.format(subject, session))
     sbrefs = sorted(glob.glob(pattern))
 
@@ -120,7 +121,7 @@ def make_bref_master(
         cmd=['fslreorient2std',
              _container_path(work_dir, os.path.basename(bref_master), docker_image)],
     )
-    shutil.copy(os.path.join(work_dir, os.path.basename(bref_master)), bref_master)
+    shutil.copy(opj(work_dir, os.path.basename(bref_master)), bref_master)
 
     return bref_master
 
@@ -137,13 +138,13 @@ def convert_fs_t1(
 
     Returns the host path to the converted NIfTI.
     """
-    mgz = os.path.join(subjects_dir, subject, 'mri', 'brain.mgz')
+    mgz = opj(subjects_dir, subject, 'mri', 'brain.mgz')
     if not Path(mgz).exists():
         raise FileNotFoundError(
             'FreeSurfer brain.mgz not found: {}'.format(mgz))
 
     mgz_staged = _stage(mgz, work_dir)
-    fs_t1_work = os.path.join(work_dir, 'desc-fsbrain.nii.gz')
+    fs_t1_work = opj(work_dir, 'desc-fsbrain.nii.gz')
     mgz_c      = _container_path(work_dir, os.path.basename(mgz_staged), docker_image)
     fs_t1_c    = _container_path(work_dir, 'desc-fsbrain.nii.gz',        docker_image)
 
@@ -195,9 +196,9 @@ def run_bbregister(
     )
 
     # Stage FreeSurfer subject tree
-    subj_fs_dst = os.path.join(work_dir, 'subjects', subject)
+    subj_fs_dst = opj(work_dir, 'subjects', subject)
     if not Path(subj_fs_dst).exists():
-        shutil.copytree(os.path.join(subjects_dir, subject), subj_fs_dst)
+        shutil.copytree(opj(subjects_dir, subject), subj_fs_dst)
 
     init_dat_c      = _container_path(work_dir, 'sbref_initial_reg.dat', docker_image)
     subjects_dir_c  = _container_path(work_dir, 'subjects',              docker_image)
@@ -254,12 +255,12 @@ def run_bbregister(
     sbref2fs_fslmat = build_output_name(
         subject_output_dir, subject, session, 'desc-sbref2fs_bbr_fsl', extension='.mat')
 
-    shutil.copy(os.path.join(work_dir, 'sbref_bbreg.dat'),     bbreg_dat)
-    shutil.copy(os.path.join(work_dir, 'sbref_bbreg_fsl.mat'), sbref2fs_fslmat)
+    shutil.copy(opj(work_dir, 'sbref_bbreg.dat'),     bbreg_dat)
+    shutil.copy(opj(work_dir, 'sbref_bbreg_fsl.mat'), sbref2fs_fslmat)
 
     aligned_final = build_output_name(
         subject_output_dir, subject, session, 'BREF_MASTER_aligned')
-    shutil.copy(os.path.join(work_dir, 'BREF_MASTER_aligned.nii.gz'), aligned_final)
+    shutil.copy(opj(work_dir, 'BREF_MASTER_aligned.nii.gz'), aligned_final)
 
     return bbreg_dat, sbref2fs_fslmat
 
@@ -298,12 +299,12 @@ def register_sbref_to_master(
             '-dof',  '6',
             '-cost', 'normcorr',
             '-omat', mat_c,
-            '-out', os.path.join(work_dir, vol_name),
+            '-out', opj(work_dir, vol_name),
         ],
     )
 
-    mat_final = os.path.join(subject_output_dir, mat_name)
-    shutil.copy(os.path.join(work_dir, mat_name), mat_final)
+    mat_final = opj(subject_output_dir, mat_name)
+    shutil.copy(opj(work_dir, mat_name), mat_final)
     return mat_final
 
 
@@ -339,7 +340,7 @@ def run_mcflirt(
         ],
     )
 
-    mcf_prefix = os.path.join(work_dir, 'bold_mcf')
+    mcf_prefix = opj(work_dir, 'bold_mcf')
     return mcf_prefix + '.nii.gz', mcf_prefix + '.par', mcf_prefix + '.mat'
 
 
@@ -348,39 +349,55 @@ def concat_transforms(
     sbref_i_to_master_mat: str,
     sbref2fs_fslmat: str,
     combined_mats_dir: str,
+    work_dir: str,
+    docker_image: str,
 ) -> None:
-    """
-    Concatenate per-volume transforms: VOL -> sbref_i -> sbref_master -> FS_T1.
-    """
     os.makedirs(combined_mats_dir, exist_ok=True)
-    mat_files = sorted(glob.glob(os.path.join(mcf_mats_dir, 'MAT_*')))
+    mat_files = sorted(glob.glob(opj(mcf_mats_dir, 'MAT_*')))
     if not mat_files:
-        raise FileNotFoundError(
-            'No MAT_* files found in {}'.format(mcf_mats_dir))
+        raise FileNotFoundError('No MAT_* files found in {}'.format(mcf_mats_dir))
 
+    # Stage everything into work_dir
     for mat in mat_files:
-        bn      = os.path.basename(mat)
-        tmp_mat = os.path.join(combined_mats_dir, 'tmp_{}'.format(bn))
-        out_mat = os.path.join(combined_mats_dir, bn)
+        _stage(mat, work_dir)
+    _stage(sbref_i_to_master_mat, work_dir)
+    _stage(sbref2fs_fslmat, work_dir)
+    os.makedirs(combined_mats_dir, exist_ok=True)
 
-        # Step 1: VOL -> sbref_master
-        run_local([
-            'convert_xfm',
-            '-omat',   tmp_mat,
-            '-concat', sbref_i_to_master_mat,
-            mat,
-        ], verbose=False)
+    n_mats = len(mat_files)
+    mats_c      = _container_path(work_dir, os.path.basename(mcf_mats_dir),        docker_image)
+    combined_c  = _container_path(work_dir, os.path.basename(combined_mats_dir),   docker_image)
+    m1_c        = _container_path(work_dir, os.path.basename(sbref_i_to_master_mat), docker_image)
+    m2_c        = _container_path(work_dir, os.path.basename(sbref2fs_fslmat),       docker_image)
 
-        # Step 2: VOL -> FS_T1
-        run_local([
-            'convert_xfm',
-            '-omat',   out_mat,
-            '-concat', sbref2fs_fslmat,
-            tmp_mat,
-        ], verbose=False)
+    # Build a shell script string: loop over all MAT_* in one container exec
+    shell_script = (
+        f'for mat in {mats_c}/MAT_*; do '
+        f'  bn=$(basename "$mat"); '
+        f'  convert_xfm -omat {combined_c}/tmp_$bn -concat {m1_c} $mat && '
+        f'  convert_xfm -omat {combined_c}/$bn     -concat {m2_c} {combined_c}/tmp_$bn && '
+        f'  rm {combined_c}/tmp_$bn; '
+        f'done'
+    )
 
-        os.remove(tmp_mat)
+    run_cmd(
+        work_dir=work_dir,
+        docker_image=docker_image,
+        cmd=['bash', '-c', shell_script],
+    )
 
+    if os.path.abspath(opj(work_dir, os.path.basename(combined_mats_dir))) != os.path.abspath(combined_mats_dir):
+        print(work_dir)
+        print(combined_mats_dir)
+        bloop
+        # Copy results back
+        for mat in mat_files:
+            bn = os.path.basename(mat)
+            
+            shutil.copy(
+                opj(work_dir, os.path.basename(combined_mats_dir), bn),
+                opj(combined_mats_dir, bn),
+            )
 
 def apply_xfm4d(
     bold_file: str,
@@ -401,10 +418,10 @@ def apply_xfm4d(
     fs_t1_c = _container_path(work_dir, os.path.basename(fs_t1_nii),  docker_image)
 
     # Extract first volume to read voxel size
-    res_ref = os.path.join(work_dir, 'res_ref.nii.gz')
+    res_ref = opj(work_dir, 'res_ref.nii.gz')
     run_local(['fslroi', bold_file, res_ref, '0', '1'])
     vox = fsl_val(res_ref, 'pixdim1')
-
+    docker_image = 'local'
     # Resample FS T1 to BOLD voxel size (still in FS space)
     res_ref_hd_c = _container_path(work_dir, 'res_ref_correct_header.nii.gz', docker_image)
     run_cmd(
@@ -450,9 +467,9 @@ def project_to_surface(
 
     Returns a dict mapping hemisphere ('lh', 'rh') -> output GIFTI path.
     """
-    subj_fs_dst = os.path.join(work_dir, 'subjects', subject)
+    subj_fs_dst = opj(work_dir, 'subjects', subject)
     if not Path(subj_fs_dst).exists():
-        shutil.copytree(os.path.join(subjects_dir, subject), subj_fs_dst)
+        shutil.copytree(opj(subjects_dir, subject), subj_fs_dst)
 
     bold_staged    = _stage(bold_fs_out, work_dir)
     bold_c         = _container_path(work_dir, os.path.basename(bold_staged), docker_image)
@@ -464,7 +481,7 @@ def project_to_surface(
     for hemi, hemi_gifti in hemi_map.items():
         surf_name = '{}_space-fsnative_hemi-{}_bold.func.gii'.format(
             bold_base, hemi_gifti)
-        surf_work = os.path.join(work_dir, surf_name)
+        surf_work = opj(work_dir, surf_name)
         surf_c    = _container_path(work_dir, surf_name, docker_image)
 
         run_cmd(
@@ -518,7 +535,7 @@ def process_run(
     run_label, task_label = get_labels(bold_file)
     run_suffix = '_'.join(t for t in [task_label, run_label] if t)
 
-    work_dir = os.path.join(subject_output_dir, run_suffix)
+    work_dir = opj(subject_output_dir, run_suffix)
     os.makedirs(work_dir, exist_ok=True)
     safe_work_dir = make_safe_workdir(work_dir)
 
@@ -533,7 +550,7 @@ def process_run(
             subject_output_dir, subject, session, suffix, extension=ext)
 
     def _work(filename):
-        return os.path.join(safe_work_dir, filename)
+        return opj(safe_work_dir, filename)
 
     # ------------------------------------------------------------------
     # Step 2b - Register sbref_i to BREF_MASTER
@@ -541,7 +558,7 @@ def process_run(
     print('\n  [Step 2b] Registering sbref_i to BREF_MASTER...')
 
     mat_name = '{}_brefi_to_bref_master.mat'.format(base)
-    sbref_to_master_final = os.path.join(subject_output_dir, mat_name)
+    sbref_to_master_final = opj(subject_output_dir, mat_name)
     sbref_to_master_work  = _work(mat_name)
 
     if not check_skip(
@@ -568,7 +585,7 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 3] MCFLIRT motion correction (ref = sbref_i)...')
 
-    mcf_mats_dir_final = os.path.join(
+    mcf_mats_dir_final = opj(
         subject_output_dir, '{}_desc-mcflirt.mat'.format(base))
     mcf_par_final      = _final('{}_desc-mcflirt_motion'.format(base), ext='.par')
     mcf_mats_dir_work  = _work('bold_mcf.mat')
@@ -600,7 +617,7 @@ def process_run(
     print('\n  [Step 4] Concatenating transforms '
           '(VOL -> sbref_i -> BREF_MASTER -> FS_T1)...')
 
-    combined_mats_dir_final = os.path.join(
+    combined_mats_dir_final = opj(
         subject_output_dir,
         '{}_desc-mcflirt+bbreg_transforms'.format(base),
     )
@@ -617,6 +634,8 @@ def process_run(
             sbref_i_to_master_mat=sbref_to_master_work,
             sbref2fs_fslmat=sbref2fs_fslmat,
             combined_mats_dir=combined_mats_dir_work,
+            work_dir=safe_work_dir,
+            docker_image='local',
         )
         if Path(combined_mats_dir_final).exists():
             shutil.rmtree(combined_mats_dir_final)
@@ -654,10 +673,10 @@ def process_run(
     # Step 6 - Surface projection
     # ------------------------------------------------------------------
     print('\n  [Step 6] Projecting to cortical surface...')
-    surf_lh_final = os.path.join(
+    surf_lh_final = opj(
         subject_output_dir,
         '{}_{}_{}_space-fsnative_hemi-L_bold.func.gii'.format(subject, session, base))
-    surf_rh_final = os.path.join(
+    surf_rh_final = opj(
         subject_output_dir,
         '{}_{}_{}_space-fsnative_hemi-R_bold.func.gii'.format(subject, session, base))
 
@@ -693,6 +712,7 @@ def process_run(
 # Top-level pipeline
 # ---------------------------------------------------------------------------
 
+# signature change
 def run_pipeline(
     bids_dir : str,
     input_file: str,
@@ -702,6 +722,8 @@ def run_pipeline(
     subjects_dir: str = None,
     docker_image: str = 'local',
     overwrite: dict = None,
+    task_filter: str = None,   
+    run_filter: str = None,
 ) -> dict:
     """
     Run the full motion correction + registration + surface projection pipeline.
@@ -722,14 +744,14 @@ def run_pipeline(
         ow.update(overwrite)
 
     input_dir  = str(Path(
-        os.path.join(bids_dir, 'derivatives',input_file)
+        opj(bids_dir, 'derivatives',input_file)
         ).resolve())
     output_dir = str(Path(
-        os.path.join(bids_dir, 'derivatives',output_file)
+        opj(bids_dir, 'derivatives',output_file)
         ).resolve())
 
-    subject_input_dir  = os.path.join(input_dir,  subject, session)
-    subject_output_dir = os.path.join(output_dir, subject, session)
+    subject_input_dir  = opj(input_dir,  subject, session)
+    subject_output_dir = opj(output_dir, subject, session)
 
     os.makedirs(subject_output_dir, exist_ok=True)
 
@@ -738,7 +760,7 @@ def run_pipeline(
     if not subjects_dir:
         raise ValueError('--subjects-dir not set and $SUBJECTS_DIR is empty.')
 
-    session_work_dir = os.path.join(subject_output_dir, '_session_work')
+    session_work_dir = opj(subject_output_dir, '_session_work')
     os.makedirs(session_work_dir, exist_ok=True)
     safe_session_work = make_safe_workdir(session_work_dir)
 
@@ -760,7 +782,7 @@ def run_pipeline(
 
     bref_master_final = build_output_name(
         subject_output_dir, subject, session, 'BREF_MASTER')
-    note_file = os.path.join(
+    note_file = opj(
         subject_output_dir, 'reference_method_notes.txt')
 
     if not check_skip(
@@ -830,9 +852,17 @@ def run_pipeline(
     # ------------------------------------------------------------------
     # Discover BOLD runs
     # ------------------------------------------------------------------
-    bold_pattern = os.path.join(
+    bold_pattern = opj(
         subject_input_dir, '{}_{}*bold*.nii*'.format(subject, session))
     bold_files = sorted(glob.glob(bold_pattern))
+    # Filter by --task / --run if requested
+    if task_filter:
+        task_filter = 'task-' + task_filter.removeprefix('task-')
+        bold_files = [f for f in bold_files if task_filter in os.path.basename(f)]
+    if run_filter:
+        run_filter = 'run-' + run_filter.removeprefix('run-')
+        bold_files = [f for f in bold_files if run_filter in os.path.basename(f)]
+
     if not bold_files:
         raise FileNotFoundError(
             'No BOLD files found for {}_{}.  Searched: {}'.format(
@@ -857,13 +887,13 @@ def run_pipeline(
         # Locate per-run sbref
         # ------------------------------------------------------------------
         if run_label:
-            sbref_pat = os.path.join(
+            sbref_pat = opj(
                 subject_input_dir,
                 '{}_{}_{}_{}*sbref*.nii*'.format(
                     subject, session, task_label, run_label))
             sbref_matches = sorted(glob.glob(sbref_pat))
         else:
-            all_sbrefs = glob.glob(os.path.join(
+            all_sbrefs = glob.glob(opj(
                 subject_input_dir,
                 '{}_{}_{}_*sbref*.nii*'.format(subject, session, task_label)))
             sbref_matches = [f for f in all_sbrefs
@@ -882,7 +912,7 @@ def run_pipeline(
         #     if run_label:
         #         parts.append(run_label)
         #     parts.append('desc-vol0bold_sbref')
-        #     synthetic_sbref = os.path.join(
+        #     synthetic_sbref = opj(
         #         subject_output_dir, '_'.join(parts) + '.nii.gz')
 
         #     if not Path(synthetic_sbref).exists():
@@ -925,7 +955,7 @@ def run_pipeline(
     print('All {} run(s) completed successfully.'.format(len(bold_files)))
     print('Output directory: {}'.format(subject_output_dir))
     print('=' * 55)
-    subj_fs_dst = os.path.join(session_work_dir, 'subjects')
+    subj_fs_dst = opj(session_work_dir, 'subjects')
     if Path(subj_fs_dst).exists():
         shutil.rmtree(subj_fs_dst)
     return all_results
@@ -957,9 +987,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument('--subjects-dir', default=None,
                    help='FreeSurfer SUBJECTS_DIR (default: $SUBJECTS_DIR)')
     p.add_argument('--docker',
-                   default=os.environ.get('NEURO_IMAGE', 'local'),
+                   default=os.environ.get('FSL_FREESURFER_IMAGE', 'local'),
                    help='Docker image for FSL/FreeSurfer tools, or "local"')
-
+    
+    # specify task + run (optional)
+    p.add_argument('--task', default=None,
+                   help='Task label to process (e.g. rest). Omit to process all tasks.')
+    p.add_argument('--run',  default=None,
+                   help='Run label to process (e.g. 01 or run-01). Omit to process all runs.')
+    
     ow_group = p.add_argument_group(
         'overwrite options',
         'Valid step names: ' + ', '.join(STEP_KEYS),
@@ -1000,6 +1036,8 @@ def main():
         subjects_dir=args.subjects_dir,
         docker_image=args.docker,
         overwrite=overwrite,
+        task_filter=args.task,
+        run_filter=args.run,  
     )
 
 
