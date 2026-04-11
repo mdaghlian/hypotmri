@@ -7,10 +7,11 @@ for BOLD runs that have already been SDC-corrected.
 
 Coregistration strategy
 -----------------------
-(1) Select first sbref as "master" - coregister to anatomy with bbregister
-(2) Coregister each sbref_i to sbref_master   (FLIRT, normcorr, DOF 6)
-(3) MCFLIRT per run, referencing the corresponding sbref_i
-(4) Concatenate transforms:  VOL -> sbref_i -> sbref_master -> FS_T1
+(1) Build BREF_MASTER from the first sbref found in the input directory
+(2) Coregister BREF_MASTER to anatomy with bbregister
+(3) Coregister each sbref_i to BREF_MASTER   (FLIRT, normcorr, DOF 6)
+(4) MCFLIRT per run, referencing the corresponding sbref_i
+(5) Concatenate transforms:  VOL -> sbref_i -> BREF_MASTER -> FS_T1
 
 Overwrite behaviour
 -------------------
@@ -61,7 +62,7 @@ from cvl_utils.preproc_func import (
 STEP_KEYS = [
     'bref_master',
     'bbregister',
-    'sbref_to_master',   # per-run sbref_i -> sbref_master
+    'sbref_to_master',   # per-run sbref_i -> BREF_MASTER
     'mcflirt',
     'concat_xfm',
     'applywarp',
@@ -90,28 +91,25 @@ def make_bref_master(
         subject_input_dir, '{}_{}*sbref*.nii*'.format(subject, session))
     sbrefs = sorted(glob.glob(pattern))
 
-    bref_master = build_output_name(
-        subject_output_dir, subject, session, 'BREF_MASTER')
-
-    if sbrefs:
-        sbref_src = sbrefs[0]
-        print('  Using SBREF as BREF_MASTER: {}'.format(sbref_src))
-
-        if sbref_src.endswith('.nii'):
-            nii_dst = bref_master.replace('.gz', '')
-            shutil.copy(sbref_src, nii_dst)
-            subprocess.run(['gzip', nii_dst], check=True)
-        else:
-            shutil.copy(sbref_src, bref_master)
-
-        note = 'sbref - {} was used as BREF_MASTER\n'.format(sbref_src)
-
-    else:
+    if not sbrefs:
         raise FileNotFoundError(
             'No SBREF files found in {}'.format(subject_input_dir))
 
+    bref_master = build_output_name(
+        subject_output_dir, subject, session, 'BREF_MASTER')
+
+    sbref_src = sbrefs[0]
+    print('  Using SBREF as BREF_MASTER: {}'.format(sbref_src))
+
+    if sbref_src.endswith('.nii'):
+        nii_dst = bref_master.replace('.gz', '')
+        shutil.copy(sbref_src, nii_dst)
+        subprocess.run(['gzip', nii_dst], check=True)
+    else:
+        shutil.copy(sbref_src, bref_master)
+
     with open(note_file, 'a') as fh:
-        fh.write(note)
+        fh.write('sbref - {} was used as BREF_MASTER\n'.format(sbref_src))
 
     # Reorient to standard (in-place via work_dir)
     _stage(bref_master, work_dir)
@@ -285,8 +283,8 @@ def register_sbref_to_master(
     sbref_c  = _container_path(work_dir, os.path.basename(sbref_file),  docker_image)
     master_c = _container_path(work_dir, os.path.basename(bref_master), docker_image)
 
-    mat_name = '{}_{}_brefi_to_bref_master.mat'.format(task_label, run_label)
-    vol_name = '{}_{}_brefi_to_bref_master.nii.gz'.format(task_label, run_label)
+    mat_name = '{}_{}_sbref_to_bref_master.mat'.format(task_label, run_label)
+    vol_name = '{}_{}_sbref_to_bref_master.nii.gz'.format(task_label, run_label)
     mat_c    = _container_path(work_dir, mat_name, docker_image)
 
     run_cmd(
@@ -299,7 +297,7 @@ def register_sbref_to_master(
             '-dof',  '6',
             '-cost', 'normcorr',
             '-omat', mat_c,
-            '-out', opj(work_dir, vol_name),
+            '-out',  opj(work_dir, vol_name),
         ],
     )
 
@@ -357,16 +355,13 @@ def concat_transforms(
     if not mat_files:
         raise FileNotFoundError('No MAT_* files found in {}'.format(mcf_mats_dir))
 
-    # Stage everything into work_dir
     for mat in mat_files:
         _stage(mat, work_dir)
     _stage(sbref_i_to_master_mat, work_dir)
     _stage(sbref2fs_fslmat, work_dir)
-    os.makedirs(combined_mats_dir, exist_ok=True)
 
-    n_mats = len(mat_files)
-    mats_c      = _container_path(work_dir, os.path.basename(mcf_mats_dir),        docker_image)
-    combined_c  = _container_path(work_dir, os.path.basename(combined_mats_dir),   docker_image)
+    mats_c      = _container_path(work_dir, os.path.basename(mcf_mats_dir),          docker_image)
+    combined_c  = _container_path(work_dir, os.path.basename(combined_mats_dir),     docker_image)
     m1_c        = _container_path(work_dir, os.path.basename(sbref_i_to_master_mat), docker_image)
     m2_c        = _container_path(work_dir, os.path.basename(sbref2fs_fslmat),       docker_image)
 
@@ -386,18 +381,6 @@ def concat_transforms(
         cmd=['bash', '-c', shell_script],
     )
 
-    if os.path.abspath(opj(work_dir, os.path.basename(combined_mats_dir))) != os.path.abspath(combined_mats_dir):
-        print(work_dir)
-        print(combined_mats_dir)
-        bloop
-        # Copy results back
-        for mat in mat_files:
-            bn = os.path.basename(mat)
-            
-            shutil.copy(
-                opj(work_dir, os.path.basename(combined_mats_dir), bn),
-                opj(combined_mats_dir, bn),
-            )
 
 def apply_xfm4d(
     bold_file: str,
@@ -421,7 +404,7 @@ def apply_xfm4d(
     res_ref = opj(work_dir, 'res_ref.nii.gz')
     run_local(['fslroi', bold_file, res_ref, '0', '1'])
     vox = fsl_val(res_ref, 'pixdim1')
-    docker_image = 'local'
+
     # Resample FS T1 to BOLD voxel size (still in FS space)
     res_ref_hd_c = _container_path(work_dir, 'res_ref_correct_header.nii.gz', docker_image)
     run_cmd(
@@ -525,7 +508,8 @@ def process_run(
 ) -> dict:
     """
     Execute all per-run steps:
-        sbref_i->master  |  MCFLIRT  |  concat  |  applyxfm4D  |  surface project
+        2b: sbref_i -> BREF_MASTER  |  3: MCFLIRT  |  4: concat xfm
+        5: applyxfm4D               |  6: surface project
 
     Returns a dict of final output paths for this run.
     """
@@ -533,16 +517,13 @@ def process_run(
     ow.update(overwrite)
 
     run_label, task_label = get_labels(bold_file)
+
     run_suffix = '_'.join(t for t in [task_label, run_label] if t)
 
     work_dir = opj(subject_output_dir, run_suffix)
     os.makedirs(work_dir, exist_ok=True)
     safe_work_dir = make_safe_workdir(work_dir)
 
-    # ------------------------------------------------------------------
-    # Derive bold_base: BIDS entities from task onward, no sub/ses prefix,
-    # no file extensions.  Used as suffix arg to build_output_name.
-    # ------------------------------------------------------------------
     base = f'{task_label}_{run_label}'
 
     def _final(suffix, ext='.nii.gz'):
@@ -557,7 +538,7 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 2b] Registering sbref_i to BREF_MASTER...')
 
-    mat_name = '{}_brefi_to_bref_master.mat'.format(base)
+    mat_name = '{}_sbref_to_bref_master.mat'.format(base)
     sbref_to_master_final = opj(subject_output_dir, mat_name)
     sbref_to_master_work  = _work(mat_name)
 
@@ -578,7 +559,7 @@ def process_run(
         )
         shutil.copy(sbref_to_master_final, sbref_to_master_work)
 
-    print('  sbref_i -> master mat: {}'.format(sbref_to_master_final))
+    print('  sbref_i -> BREF_MASTER mat: {}'.format(sbref_to_master_final))
 
     # ------------------------------------------------------------------
     # Step 3 - MCFLIRT (reference = sbref_i)
@@ -612,7 +593,7 @@ def process_run(
     print('  Per-volume mats   : {}'.format(mcf_mats_dir_final))
 
     # ------------------------------------------------------------------
-    # Step 4 - Concatenate transforms: VOL -> sbref_i -> master -> FS_T1
+    # Step 4 - Concatenate transforms: VOL -> sbref_i -> BREF_MASTER -> FS_T1
     # ------------------------------------------------------------------
     print('\n  [Step 4] Concatenating transforms '
           '(VOL -> sbref_i -> BREF_MASTER -> FS_T1)...')
@@ -689,14 +670,14 @@ def process_run(
             bold_fs_out=bold_fs_out_work,
             subject=subject,
             subjects_dir=subjects_dir,
-            subject_output_dir=subject_output_dir,
             bold_base=base,
             work_dir=safe_work_dir,
             docker_image=docker_image,
         )
         shutil.copy(outputs['lh'], surf_lh_final)
         shutil.copy(outputs['rh'], surf_rh_final)
-    shutil.rmtree(work_dir,)
+
+    shutil.rmtree(work_dir)
     return {
         'sbref_to_master_mat': sbref_to_master_final,
         'mcf_motion_params':   mcf_par_final,
@@ -712,9 +693,8 @@ def process_run(
 # Top-level pipeline
 # ---------------------------------------------------------------------------
 
-# signature change
 def run_pipeline(
-    bids_dir : str,
+    bids_dir: str,
     input_file: str,
     output_file: str,
     subject: str,
@@ -722,7 +702,7 @@ def run_pipeline(
     subjects_dir: str = None,
     docker_image: str = 'local',
     overwrite: dict = None,
-    task_filter: str = None,   
+    task_filter: str = None,
     run_filter: str = None,
 ) -> dict:
     """
@@ -743,12 +723,8 @@ def run_pipeline(
             )
         ow.update(overwrite)
 
-    input_dir  = str(Path(
-        opj(bids_dir, 'derivatives',input_file)
-        ).resolve())
-    output_dir = str(Path(
-        opj(bids_dir, 'derivatives',output_file)
-        ).resolve())
+    input_dir  = str(Path(opj(bids_dir, 'derivatives', input_file)).resolve())
+    output_dir = str(Path(opj(bids_dir, 'derivatives', output_file)).resolve())
 
     subject_input_dir  = opj(input_dir,  subject, session)
     subject_output_dir = opj(output_dir, subject, session)
@@ -782,8 +758,7 @@ def run_pipeline(
 
     bref_master_final = build_output_name(
         subject_output_dir, subject, session, 'BREF_MASTER')
-    note_file = opj(
-        subject_output_dir, 'reference_method_notes.txt')
+    note_file = opj(subject_output_dir, 'reference_method_notes.txt')
 
     if not check_skip(
         {'bref_master': bref_master_final},
@@ -855,7 +830,7 @@ def run_pipeline(
     bold_pattern = opj(
         subject_input_dir, '{}_{}*bold*.nii*'.format(subject, session))
     bold_files = sorted(glob.glob(bold_pattern))
-    # Filter by --task / --run if requested
+
     if task_filter:
         task_filter = 'task-' + task_filter.removeprefix('task-')
         bold_files = [f for f in bold_files if task_filter in os.path.basename(f)]
@@ -883,9 +858,7 @@ def run_pipeline(
 
         run_label, task_label = get_labels(bold_file)
 
-        # ------------------------------------------------------------------
         # Locate per-run sbref
-        # ------------------------------------------------------------------
         if run_label:
             sbref_pat = opj(
                 subject_input_dir,
@@ -901,9 +874,9 @@ def run_pipeline(
 
         sbref_file   = sbref_matches[0]
         sbref_source = 'input'
+
         # --- NOT IMPLEMENTED: synthetic sbref fallback ---
         # else:
-        #     # Build the expected output name and skip recompute if it exists
         #     parts = [subject]
         #     if session:
         #         parts.append(session)
@@ -914,7 +887,7 @@ def run_pipeline(
         #     parts.append('desc-vol0bold_sbref')
         #     synthetic_sbref = opj(
         #         subject_output_dir, '_'.join(parts) + '.nii.gz')
-
+        #
         #     if not Path(synthetic_sbref).exists():
         #         print('  No SBREF found — extracting vol 0 as synthetic sbref...')
         #         synthetic_sbref = make_first_vol_sbref(
@@ -955,9 +928,11 @@ def run_pipeline(
     print('All {} run(s) completed successfully.'.format(len(bold_files)))
     print('Output directory: {}'.format(subject_output_dir))
     print('=' * 55)
+
     subj_fs_dst = opj(session_work_dir, 'subjects')
     if Path(subj_fs_dst).exists():
         shutil.rmtree(subj_fs_dst)
+
     return all_results
 
 
@@ -983,19 +958,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p.add_argument('--ses',          default='ses-01',
                    help='Session label')
-
     p.add_argument('--subjects-dir', default=None,
                    help='FreeSurfer SUBJECTS_DIR (default: $SUBJECTS_DIR)')
     p.add_argument('--docker',
                    default=os.environ.get('FSL_FREESURFER_IMAGE', 'local'),
                    help='Docker image for FSL/FreeSurfer tools, or "local"')
-    
-    # specify task + run (optional)
     p.add_argument('--task', default=None,
                    help='Task label to process (e.g. rest). Omit to process all tasks.')
     p.add_argument('--run',  default=None,
                    help='Run label to process (e.g. 01 or run-01). Omit to process all runs.')
-    
+
     ow_group = p.add_argument_group(
         'overwrite options',
         'Valid step names: ' + ', '.join(STEP_KEYS),
@@ -1025,8 +997,10 @@ def main():
         overwrite = {k: True for k in STEP_KEYS}
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
-    args.sub = "sub-" + args.sub.removeprefix("sub-")
-    args.ses = "ses-" + args.ses.removeprefix("ses-")
+
+    args.sub = 'sub-' + args.sub.removeprefix('sub-')
+    args.ses = 'ses-' + args.ses.removeprefix('ses-')
+
     run_pipeline(
         bids_dir=args.bids_dir,
         input_file=args.input_file,
@@ -1037,7 +1011,7 @@ def main():
         docker_image=args.docker,
         overwrite=overwrite,
         task_filter=args.task,
-        run_filter=args.run,  
+        run_filter=args.run,
     )
 
 
