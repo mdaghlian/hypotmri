@@ -92,6 +92,12 @@ class PCA_denoiser():
         rsq: root mean squared differences
         denoised_data: residuals (now cleaned data)
         """
+        
+        # -- MD ADDED
+        # data = self.lf_filter.filter_data(data.T).T
+        # --
+
+
         # Add row of 1s to the design matrix.
         self.dm = np.vstack([np.ones(self.pca_comps.shape[0]), self.pca_comps.T]).T
         # Do OLS
@@ -110,11 +116,11 @@ class PCA_denoiser():
 
         # Add back in intercept
         resid+= np.nanmean(data,axis=-1)[:,np.newaxis]
-        return resid
+        return resid #, betas
         
 class SGFilter:
     
-    def __init__(self,polyorder=3, deriv=0, window_length = 120,tr=1):
+    def __init__(self,polyorder=3, deriv=0, window_length = 347,tr=1):
         """ Applies a savitsky-golay filter to continuous data.
 
         Fits a savitsky-golay filter to 2D data and subtracts the
@@ -125,7 +131,7 @@ class SGFilter:
         Order of polynomials to use in filter.
         deriv : int (default: 0)
         Number of derivatives to use in filter.
-        window_length : int (default: 120)
+        window_length : int (default: 347)
         Window length in seconds.
 
         """
@@ -161,7 +167,7 @@ class SGFilter:
             window += 1
 
         data_filt = savgol_filter(data, window_length=window, polyorder=self.polyorder,
-                                  deriv=self.deriv, axis=1, mode='nearest')
+                                  deriv=self.deriv, axis=-1, mode='nearest')
 
         data_filt = data - data_filt + data.mean(axis=-1)[:, np.newaxis]
 
