@@ -6,11 +6,13 @@ chmod +x "${PIPELINE_DIR}/config"/*
 chmod +x "${PIPELINE_DIR}/config/hpc_helpers/"/*
 chmod +x "${PIPELINE_DIR}/anatomical"/*
 chmod +x "${PIPELINE_DIR}/functional"/*
+chmod +x "${PIPELINE_DIR}/postproc"/*
 export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"
 export PATH="${PIPELINE_DIR}/config:${PATH}"
 export PATH="${PIPELINE_DIR}/config/hpc_helpers:${PATH}"
 export PATH="${PIPELINE_DIR}/anatomical:${PATH}"
 export PATH="${PIPELINE_DIR}/functional:${PATH}"
+export PATH="${PIPELINE_DIR}/postproc:${PATH}"
 # If PC_LOCATION is not set, default to "local"
 [[ -z "$PC_LOCATION" ]] &&  export PC_LOCATION="local" 
 # --- Software versions ---
