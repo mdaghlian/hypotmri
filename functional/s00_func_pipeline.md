@@ -72,13 +72,15 @@ s02_coreg_hpc.sh --sub hp01 --ses 01 \
 
 
 # you can loop over a submmission job like this
-for TASK in "CSFRE" "pRFLE" "pRFRE"; do
-    s02_coreg_hpc.sh --sub hp01 --ses 01 \
-        --input-file s1_AFNI_sdc \
-        --output-file s2_coreg \
-        --bids-dir $BIDS_DIR \
-        --skip-sync \
-        -- --task $TASK
+for TASK in "CSFLE" "CSFRE" "pRFLE" "pRFRE"; do
+    for run in "01" "02" "03"; do
+        s02_coreg_hpc.sh --sub hp01 --ses 01 \
+            --input-file s1_AFNI_sdc \
+            --output-file s2_coreg \
+            --bids-dir $BIDS_DIR \
+            --skip-sync \
+            -- --task $TASK --run $run
+    done
 done
 ```
 
