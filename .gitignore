@@ -9,5 +9,6 @@ license.txt
 .vscode*
 /config/project_*.sh
 /postproc/project_*.yml
+/postproc/project_*.npy
 *.egg-info/
 *__pycache__/

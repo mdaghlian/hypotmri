@@ -48,6 +48,3 @@ norm:
 
 #Constraints
 constraints : False # Determines which fitter is used. None is fastere (lGBFS), than [] (trust-constrained)
-
-
-save_grids : True # Save the outputs of the grid stage?
