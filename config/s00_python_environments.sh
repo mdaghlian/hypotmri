@@ -95,6 +95,7 @@ install_prf() {
         nilearn==$NILEARN_VERSION
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install git+https://github.com/mdaghlian/prfpy.git
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install git+https://github.com/mdaghlian/dpu_mini.git
+    $PYPACKAGE_MANAGER run -n $ENV_NAME pip install -e $PIPELINE_DIR/cvl_utils
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install -U setuptools wheel numpy cython
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install -U pycortex==1.3.0
     echo "Done! Activate with: $PYPACKAGE_MANAGER activate $ENV_NAME"
