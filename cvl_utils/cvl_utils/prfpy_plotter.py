@@ -154,8 +154,8 @@ class TSPlotter(Prf1T1M):
         this_rf = np.rot90(gauss2D_iso_cart(
                 x=self.prfpy_stim.x_coordinates[...,np.newaxis],
                 y=self.prfpy_stim.y_coordinates[...,np.newaxis],
-                mu=(self.pd_params['x'][idx], self.pd_params['y'][idx]),
-                sigma=self.pd_params['size_1'][idx],
+                mu=(self.pd_params['mu_x'][idx], self.pd_params['mu_y'][idx]),
+                sigma=self.pd_params['size'][idx],
                 normalize_RFs=self.prfpy_model.normalize_RFs).T,axes=(1,2))
         this_rf = np.squeeze(this_rf)
         this_pred_ts = np.squeeze(self.prfpy_model.return_prediction(*list(self.prf_params_np[idx,:-1])))
@@ -181,10 +181,10 @@ class TSPlotter(Prf1T1M):
             self.real_ts_plot(ax=ax[1], idx=idx)
         # ax[1].plot((0,ts_x[-1]), (0,0), 'k')   
         # Do dm?
-        dag_update_fig_fontsize(fig, 15)        
+        dpu_update_fig_fontsize(fig, 15)        
         if do_dm:
             ax[1].set_xticks(np.arange(ts_x[0], ts_x[-1],15))            
-            dag_add_dm_to_ts(                
+            dpu_add_dm_to_ts(                
                 fig, 
                 ax=ax[1], 
                 dm=self.prfpy_stim.design_matrix, 
@@ -214,15 +214,15 @@ class TSPlotter(Prf1T1M):
         this_arf = np.rot90(gauss2D_iso_cart(
                 x=self.prfpy_stim.x_coordinates[...,np.newaxis],
                 y=self.prfpy_stim.y_coordinates[...,np.newaxis],
-                mu=(self.pd_params['x'][idx], self.pd_params['y'][idx]),
-                sigma=self.pd_params['size_1'][idx],
+                mu=(self.pd_params['mu_x'][idx], self.pd_params['mu_y'][idx]),
+                sigma=self.pd_params['prf_size'][idx],
                 normalize_RFs=self.prfpy_model.normalize_RFs).T,axes=(1,2))
         this_arf = np.squeeze(this_arf)
         this_srf = np.rot90(gauss2D_iso_cart(
                 x=self.prfpy_stim.x_coordinates[...,np.newaxis],
                 y=self.prfpy_stim.y_coordinates[...,np.newaxis],
-                mu=(self.pd_params['x'][idx], self.pd_params['y'][idx]),
-                sigma=self.pd_params['size_2'][idx],
+                mu=(self.pd_params['mu_x'][idx], self.pd_params['mu_y'][idx]),
+                sigma=self.pd_params['srf_size'][idx],
                 normalize_RFs=self.prfpy_model.normalize_RFs).T,axes=(1,2))
         this_srf = np.squeeze(this_srf)
         this_rf = [this_arf, this_srf]
@@ -371,8 +371,8 @@ class TSPlotter(Prf1T1M):
             CSp         = ncsf_info['CSp'],
             width_l     = ncsf_info['width_l'],
             crf_exp     = ncsf_info['crf_exp'],
-            beta        = ncsf_info['amp_1'],
-            baseline    = ncsf_info['bold_baseline'],
+            beta        = ncsf_info['beta'],
+            baseline    = ncsf_info['baseline'],
             hrf_1       = hrf_1,
             hrf_2       = hrf_2,
         )
@@ -501,7 +501,7 @@ class TSPlotter(Prf1T1M):
         # set ylabel to red, also yticks
         con_ax.set_ylabel('contrast ', color='red', alpha=0.5)        
         con_ax.set_yscale('log')
-        con_ax.tick_params(axis='y', colors='red')
+        con_ax.tick_params(axis='mu_y', colors='red')
         con_ax.spines['right'].set_visible(False)
         con_ax.spines['top'].set_visible(False)
         con_ax.yaxis.set_label_position('left')
