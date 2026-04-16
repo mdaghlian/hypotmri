@@ -51,7 +51,22 @@ class PCA_denoiser():
         medians=np.nanmedian(self.nuissance_array,axis=0)
         for c,v in enumerate(medians):
             self.nuissance_array[:,c][np.isnan(self.nuissance_array[:,c])]=medians[c]
-        self.prepared_array=scipy.stats.zscore(self.nuissance_array)
+        if (np.std(self.nuissance_array, axis=0)==0).any():
+            print(["Don't ignore this warning!!!!!"]*100)
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Warning: NaNs in prepared array after z-scoring. Check confounds file and preparation steps.')
+            print('Marcus is aware of this - speak to him - he is fixing it')
+            print('LIKELY DUE TO 0 MOTION FROM MCFLIRT - CHECK THIS')
+            
+            self.prepared_array=scipy.stats.zscore(self.nuissance_array, axis=0)
+            nan_cols = np.isnan(self.prepared_array).any(axis=0)
+            self.prepared_array[:, nan_cols] = 0
+        else:
+            self.prepared_array=scipy.stats.zscore(self.nuissance_array, axis=0)
 
     def run_pca(self):
         

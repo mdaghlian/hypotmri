@@ -337,7 +337,8 @@ def compute_pca_confounds(
             'None of the requested nuissance_vars were found in {}'.format(
                 confounds_tsv))
     df = df[available]
-
+    print(df)
+    print(f'N components available = {len(available)}')
     pca_denoiser = PCA_denoiser(
         confounds=df, 
         lf_filter=lf_filter, 
@@ -994,7 +995,7 @@ def run_pipeline(
             # *** TO UPDATE ***
             pat = os.path.join(
                 subject_input_dir,
-                f'{task_label}_{run_label}*space-fsnative_hemi-{hemi_letter}_bold.func.gii'
+                f'*{task_label}_{run_label}*space-fsnative_hemi-{hemi_letter}_bold.func.gii'
             )
             hits = sorted(glob.glob(pat))
             return hits[0] if hits else None

@@ -111,7 +111,7 @@ Locally:
 s04_confounds.py --sub hp01 --ses 01 \
     --bids-dir $BIDS_DIR \
     --moco-file s2_coreg \
-    --output-dir s4_denoised
+    --output-file s4_denoised
 ```
 
 On the cluster:
@@ -120,5 +120,5 @@ On the cluster:
 s04_confounds_hpc.sh --sub hp01 --ses 01 \
     --bids-dir $BIDS_DIR \
     --moco-file s2_coreg \
-    --output-dir s4_denoised
+    --output-file s4_denoised
 ```
