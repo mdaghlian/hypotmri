@@ -282,10 +282,10 @@ def register_sbref_to_master(
 
     sbref_c  = _container_path(work_dir, os.path.basename(sbref_file),  docker_image)
     master_c = _container_path(work_dir, os.path.basename(bref_master), docker_image)
-
     mat_name = '{}_{}_sbref_to_bref_master.mat'.format(task_label, run_label)
     vol_name = '{}_{}_sbref_to_bref_master.nii.gz'.format(task_label, run_label)
     mat_c    = _container_path(work_dir, mat_name, docker_image)
+    vol_c    = _container_path(work_dir, vol_name, docker_image)
 
     run_cmd(
         work_dir=work_dir,
@@ -297,7 +297,7 @@ def register_sbref_to_master(
             '-dof',  '6',
             '-cost', 'normcorr',
             '-omat', mat_c,
-            '-out',  opj(work_dir, vol_name),
+            '-out',  vol_c,
         ],
     )
 
