@@ -1,40 +1,61 @@
 # It is good practice when running analyses to save various settings outside the scripts, and call them in.
 # Each time you run an analysis, save a copy of the .yml file used to run it. That way you can be sure what settings you used, even if you change them over time.
-# ***** APPLIES TO ALL MODELS *****
-# -> hrf information
+
+# Timeseries information
+TR: 1
+psc_baseline : 19 # The first 20 time points, there is NO stimulation. So we use this to set the baseline
+vols_to_chop : 4 # Discard the first 4, to match the DM
+
+
+# -> PRF fitting information
+n_jobs : 4     # For paralellisation, how many jobs to split off into
+n_batches : 10 # For paralellisation at grid stage...
+grid_nr:       # number of items in grid
+  ecc : 10 
+  pol : 10
+  size : 10
+  hrf_1 : 1
+# unit volume RFs
+normalize_RFs: False
+fixed_grid_baseline : null # Force the bold baseline to be 0 if 0, 
+# set prf amplitude
+bold_bsl: [-10,10]
+prf_ampl: [0,1000]
+rsq_threshold: 0.01         # Exclude vertices below this threshold for further fitting (iterative stage) 
+
+# ---> hrf information
+# hrf is defined using coeficients
+# for the canonical [0], derivative [1], and dispersion [2] 
 hrf:
   pars: [1,1,0]         # Default parameters 
   deriv_bound: [0,10]   # If fitting the HRF these are the bounds (for hrf[1])
   disp_bound: [0,0]     # Generally advised to fix the dispersion value. Messing with this can get complex as you risk confounding inhibitory components 
 
-# -> Generic fitting information
-xtol: 1e-4 #fitting tolerance
-ftol: 1e-4
-grid_nr: 20         #number of items in grid
-rsq_threshold: 0.01 # 
-#
-TR: 1
-#
-filter_predictions : False # Other options to do filtering...
-n_jobs : 4 # For paralellisation, how many jobs to split off into
-n_batches : 10 # For paralellisation at grid stage...
-# ***** APPLIES TO PRF MODELS *****
 
-# screen settings
+# -> screen settings
 # 43.2x27cm, viewing distance = 34cm
 screen_size_cm: 27
 screen_distance_cm: 34
-#unit volume RFs
-normalize_RFs: False
-
-#DM size in pixels (n_pix x n_pix) (has to be divisor of 1080)
-n_pix: 100
+# DM size in pixels (n_pix x n_pix)
 eps: 1e-1
 
-fixed_grid_baseline : 0
-# set prf amplitude
-bold_bsl: [-10,10]
-prf_ampl: [0,1000]
+
+
+
+
+
+
+
+
+
+# ------------- EXTRA NOT YET 
+# ---> FILTERS TODO
+# filter_kwargs:
+#   filter_predictions : True
+filter_predictions : False # Other options to do filtering...
+
+
+
 
 norm:
   surround_amplitude_grid: [0.05,0.2,0.4,0.7,1,3]
@@ -44,7 +65,3 @@ norm:
   surround_amplitude_bound: [0,1000]
   neural_baseline_bound: [0,1000]
   surround_baseline_bound: [0.000001,1000] # [1]
-
-
-#Constraints
-constraints : False # Determines which fitter is used. None is fastere (lGBFS), than [] (trust-constrained)
