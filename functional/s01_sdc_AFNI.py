@@ -183,14 +183,15 @@ def apply_warp_to_sbref(
     sdc_sbref = os.path.join(work_dir, 'sdc_sbref.nii.gz')
     if os.path.exists(sdc_sbref):
         os.unlink(sdc_sbref)
-    
+    warp_file_stage = _stage(warp_file, work_dir)
+
     run_cmd(
         work_dir=work_dir,
         docker_image=afni_docker,
         cmd=[
             '3dNwarpApply',
             '-source', _container_path(work_dir, 'sbref+orig', afni_docker),
-            '-nwarp',  _container_path(work_dir, warp_file, afni_docker),
+            '-nwarp',  _container_path(work_dir, warp_file_stage, afni_docker),
             '-master', _container_path(work_dir, master_path, afni_docker),
             '-interp', 'wsinc5',
             '-prefix', _container_path(work_dir, 'sdc_sbref.nii.gz', afni_docker),
