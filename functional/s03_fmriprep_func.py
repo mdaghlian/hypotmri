@@ -123,8 +123,8 @@ def run_fmriprep(
         '--fs-subjects-dir', '/fsdir',
         '--fs-license-file', '/license.txt',
         '--work-dir', '/work',
-        '--omp-nthreads', '8',
-        '--nprocs', '8',
+        '--omp-nthreads', '4',
+        '--nprocs', '4',
         '--ignore', 'fieldmaps', 'slicetiming',
         '--output-spaces', 'func',
     ]
