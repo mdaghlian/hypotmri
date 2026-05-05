@@ -431,7 +431,7 @@ def run_pipeline(
         if run_label:
             topup_matches = glob.glob(os.path.join(
                 fmap_dir,
-                '{}_{}_{}_{}*_epi.nii*'.format(
+                '{}_{}*_{}*_{}*_epi.nii*'.format(
                     subject, session, task_glob, run_label)))
             sbref_matches = glob.glob(os.path.join(
                 func_dir,
