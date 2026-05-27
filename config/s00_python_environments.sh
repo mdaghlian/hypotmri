@@ -3,10 +3,39 @@
 echo "creating environments using ${PYPACKAGE_MANAGER}"
 
 # ─────────────────────────────────────────────
-# Helper: remove + recreate an env
+# Flags
+# ─────────────────────────────────────────────
+CLEAN_ENV=false
+
+# Parse optional flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --clean-env)
+            CLEAN_ENV=true
+            shift
+            ;;
+        --env)
+            TARGET_ENV="$2"
+            shift 2
+            ;;
+        *)
+            echo "Usage: $0 [--clean-env] [--env <ENV_NAME>]"
+            exit 1
+            ;;
+    esac
+done
+
+# ─────────────────────────────────────────────
+# Helper: optionally remove + recreate an env
 # ─────────────────────────────────────────────
 recreate_env() {
     local ENV_NAME="$1"
+
+    if [[ "$CLEAN_ENV" != true ]]; then
+        echo "Keeping existing environment '$ENV_NAME' (use --clean-env to recreate)."
+        return
+    fi
+
     if $PYPACKAGE_MANAGER env list | grep -q "^$ENV_NAME "; then
         echo "Environment '$ENV_NAME' found. Removing it..."
         $PYPACKAGE_MANAGER env remove -n $ENV_NAME -y
@@ -74,13 +103,15 @@ install_preproc() {
 
     FSL_ENV_URL="https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/releases/fsl-${FSL_VERSION}_${FSL_PLATFORM}.yml"
     curl -L -o fsl_env.yml $FSL_ENV_URL
-    $PYPACKAGE_MANAGER env create -n $ENV_NAME --file=fsl_env.yml 
+    $PYPACKAGE_MANAGER env create -n $ENV_NAME --file=fsl_env.yml
     rm fsl_env.yml
+
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install \
         nibabel==$NIBABEL_VERSION \
         nilearn==$NILEARN_VERSION \
-        nipype==$NIPYPE_VERSION 
+        nipype==$NIPYPE_VERSION
         # antspyx==$ANTS_VERSION
+
     $PYPACKAGE_MANAGER run -n $ENV_NAME pip install -e $PIPELINE_DIR/cvl_utils
     echo "Done! Activate with: $PYPACKAGE_MANAGER activate $ENV_NAME"
 }
@@ -112,28 +143,19 @@ install_all() {
     done
 }
 
-if [[ $# -eq 0 ]]; then
+if [[ -z "$TARGET_ENV" ]]; then
     install_all
-elif [[ "$1" == "--env" ]]; then
-    if [[ -z "$2" ]]; then
-        echo "Error: --env requires an argument."
-        echo "Valid environments: ${VALID_ENVS[*]}"
-        exit 1
-    fi
-    case "$2" in
+else
+    case "$TARGET_ENV" in
         b14)      install_b14 ;;
         autoflat) install_autoflat ;;
         pctx)     install_pctx ;;
         preproc)  install_preproc ;;
         prf)      install_prf ;;
         *)
-            echo "Error: unknown environment '$2'."
+            echo "Error: unknown environment '$TARGET_ENV'."
             echo "Valid environments: ${VALID_ENVS[*]}"
             exit 1
             ;;
     esac
-else
-    echo "Usage: $0 [--env <ENV_NAME>]"
-    echo "Valid environments: ${VALID_ENVS[*]}"
-    exit 1
 fi
