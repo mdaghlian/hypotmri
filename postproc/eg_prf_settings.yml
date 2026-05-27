@@ -39,8 +39,8 @@ screen_distance_cm: 34
 # DM size in pixels (n_pix x n_pix)
 eps: 1e-1
 
-
-
+# Connective field settings
+sigma_grid : [0.5, 1, 2, 3, 4, 5, 7, 10, 15, 20]
 
 
 
