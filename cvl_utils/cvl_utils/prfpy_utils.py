@@ -4,6 +4,8 @@ opj = os.path.join
 import matplotlib.image as mpimg
 from scipy import io, interpolate
 from scipy.ndimage import zoom
+import glob
+import yaml 
 
 opj = os.path.join
 
@@ -82,8 +84,45 @@ def prfpy_params_dict():
         'rsq'           : -1,
     }
 
+    p_order['cf'] = {
+        'centre' : 0,
+        'sigma' : 1,
+        'beta' : 2,
+        'baseline' : 3,
+        'rsq' : -1,
+    }
+
     return p_order
 
+
+def get_dm_and_settings(task,project):
+    postproc_dir = opj(os.environ['PIPELINE_DIR'], 'postproc')
+    
+    settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*.yml'))
+    if not settings_file:
+        settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*.yml'))
+        if not settings_file:
+            raise FileNotFoundError(
+                'No settings files found for {}.  Searched: {}'.format(
+                    project, postproc_dir)
+            )
+    with open(settings_file[0]) as f:
+        prf_settings = yaml.safe_load(f)    
+    
+    dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*_dm.npy'))
+    if not dm_file:
+        dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*_dm.npy'))
+        if not dm_file:
+            raise FileNotFoundError(
+                'No dm files found for {}.  Searched: {}'.format(
+                    project, postproc_dir)
+            )
+    dm = np.load(dm_file[0])
+    return prf_settings, dm
+
+# ************************************ 
+# UNSORTED - useful utils - to prune
+# ************************************
 def make_vx_wise_bounds(n_vx, bounds_in, **kwargs):
     '''make_vx_wise_bounds        
     In prfpy you normally you set the bounds for all voxels to be the same
@@ -122,7 +161,7 @@ def make_vx_wise_bounds(n_vx, bounds_in, **kwargs):
     return vx_wise_bounds
 
 
-# ************************************
+
 import numpy as np
 import matplotlib.pyplot as plt
 import os

@@ -73,7 +73,9 @@ from cvl_utils.preproc_func import (
 from cvl_utils.prfpy_utils import (
     raw_ts_to_average_psc, 
     filter_for_nans,
-    prfpy_params_dict
+    prfpy_params_dict,
+    get_dm_and_settings,
+
 )
 # ---------------------------------------------------------------------------
 # Step keys — one per docstring step (Steps 1-3 are one atomic unit)
@@ -102,30 +104,7 @@ def _load_gii_run(task, run_folder):
         run_data.append(arr_LR)
     return run_data
 
-def _get_dm_and_settings(task,project):
-    postproc_dir = opj(os.environ['PIPELINE_DIR'], 'postproc')
-    
-    settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*.yml'))
-    if not settings_file:
-        settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*.yml'))
-        if not settings_file:
-            raise FileNotFoundError(
-                'No settings files found for {}.  Searched: {}'.format(
-                    project, postproc_dir)
-            )
-    with open(settings_file[0]) as f:
-        prf_settings = yaml.safe_load(f)    
-    
-    dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*_dm.npy'))
-    if not dm_file:
-        dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*_dm.npy'))
-        if not dm_file:
-            raise FileNotFoundError(
-                'No dm files found for {}.  Searched: {}'.format(
-                    project, postproc_dir)
-            )
-    dm = np.load(dm_file[0])
-    return prf_settings, dm
+
 # ---------------------------------------------------------------------------
 # Step functions
 # ---------------------------------------------------------------------------
@@ -183,7 +162,7 @@ def run_pipeline(
                     sorted(unknown), STEP_KEYS)
             )
         sk.update(skip)
-    prf_settings, dm = _get_dm_and_settings(task,project)
+    prf_settings, dm = get_dm_and_settings(task,project)
     
     input_dir     = str(Path(
         os.path.join(bids_dir, 'derivatives', input_file)
