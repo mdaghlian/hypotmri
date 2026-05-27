@@ -10,10 +10,36 @@ from pathlib import Path
 import hashlib
 import re
 import nibabel as nib
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def load_benson14_info(sub, fs_dir):
+    ''' Load the benson 14 information
+    '''
+    
+    sub_fs_dir = os.path.join(fs_dir, sub, 'surf')    
+    b14_dict = {}
+
+    for p in ['eccen', 'angle', 'sigma', 'varea']:
+        hemi_p = []
+        for hemi in ['lh', 'rh']:
+            matches = glob.glob(os.path.join(
+                    sub_fs_dir, f"{hemi}*benson14*{p}*.mgz"
+            ))[0]
+            hemi_p.append(nib.load(matches).get_fdata().squeeze())   
+        if p=='eccen':
+            better_name = 'ecc'
+        elif p=='angle':
+            better_name = 'pol'
+        elif p=='sigma':
+            better_name = 'size_1'
+        elif p=='varea':
+            better_name = 'varea'
+        b14_dict[better_name] = np.concatenate(hemi_p, axis=0)
+    return b14_dict
+
 def _get_tr(bold_file: str) -> float:
     """Read TR (in seconds) from a NIfTI header's pixdim[4]."""
     hdr = nib.load(bold_file).header
@@ -283,6 +309,12 @@ def run_docker(
                    injected into the subprocess env (local)
     verbose      : If True, stream output to stdout
     """
+    cmd_old = cmd.copy()
+    cmd = []
+    for arg in cmd_old:
+        while work_dir in arg:
+            arg = arg.replace(work_dir, '/data/', 1)
+        cmd.append(arg)
 
     env_flags = []
     for k, v in (env_vars or {}).items():
