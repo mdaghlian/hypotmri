@@ -8,6 +8,36 @@ from scipy.ndimage import zoom
 
 opj = os.path.join
 
+# ------------------------------------------------------------
+# Coordinate helpers
+# ------------------------------------------------------------
+def cart2pol(x,y,angle='rad'):
+    ecc = np.sqrt(x**2 + y**2)
+    pol = np.arctan2(y,x)
+    if angle.lower() in ('deg', 'degrees'):
+        pol = np.degrees(pol)
+    return ecc,pol
+
+def pol2cart(ecc,pol,angle='rad'):
+    if angle.lower() in ('deg', 'degrees'):
+        pol = np.radians(pol)
+    x = ecc * np.cos(pol)
+    y = ecc * np.sin(pol)
+    return x,y
+
+def dva_to_cm(angle_deg, distance_cm):
+    """Convert degrees visual angle to physical size in cm."""
+    angle_rad = np.radians(angle_deg)
+    return 2 * distance_cm * np.tan(angle_rad / 2)
+
+def cm_to_dva(size_cm, distance_cm):
+    """Convert physical size in cm to degrees visual angle."""
+    angle_rad = 2 * np.arctan(size_cm / (2 * distance_cm))
+    return np.degrees(angle_rad)
+
+# ------------------------------------------------------------
+
+
 def filter_for_nans(array):
     """filter out NaNs from an array"""
 
