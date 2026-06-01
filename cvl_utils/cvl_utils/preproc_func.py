@@ -15,6 +15,11 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+B14_AREAS = {
+        1: 'V1',   2: 'V2',   3: 'V3',   4: 'hV4',
+        5: 'VO1',  6: 'VO2',  7: 'LO1',  8: 'LO2',
+        9: 'TO1', 10: 'TO2', 11: 'V3b', 12: 'V3a',
+    }
 def load_benson14_info(sub, fs_dir):
     ''' Load the benson 14 information
     '''
@@ -34,10 +39,14 @@ def load_benson14_info(sub, fs_dir):
         elif p=='angle':
             better_name = 'pol'
         elif p=='sigma':
-            better_name = 'size_1'
+            better_name = 'size'
         elif p=='varea':
             better_name = 'varea'
+            
+
         b14_dict[better_name] = np.concatenate(hemi_p, axis=0)
+        if p=='varea':
+            b14_dict['varea'] = [B14_AREAS[int(v)] if int(v) in B14_AREAS else 'unknown' for v in b14_dict['varea']]
     return b14_dict
 
 def _get_tr(bold_file: str) -> float:
