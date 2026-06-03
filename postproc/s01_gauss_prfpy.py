@@ -322,7 +322,7 @@ def run_pipeline(
         grid_pars_np = np.zeros((roi_mask.sum(), 8))
         for key in gaussp_keys.keys():
             grid_pars_np[:,gaussp_keys[key]] = grid_pd[key].to_numpy()
-
+        gfit.gridsearch_params = grid_pars_np.copy()
     print(f'Mean r2 = {grid_pd["rsq"].mean():.3f}')
 
     # ------------------------------------------------------------------
@@ -341,6 +341,7 @@ def run_pipeline(
             rsq_threshold=prf_settings['rsq_threshold'],    # Minimum variance explained. Puts a lower bound on the quality of PRF fits. Any fits worse than this are thrown away...     
             verbose=True,
             bounds=gauss_bounds,       # Bounds (on parameters)
+            **prf_settings.get('fitter_args', {})
             )               
         # Sometimes the fits are bad and will return NaN values. We do not want this so will remove them here:
         gfit.iterative_search_params = filter_for_nans(gfit.iterative_search_params)
