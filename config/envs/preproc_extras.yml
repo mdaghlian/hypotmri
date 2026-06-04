@@ -1,0 +1,15 @@
+# Extra packages layered on top of the FSL base environment.
+# Applied with: conda env update -n preproc -f preproc_extras.yml
+# No --prune: preserves all FSL packages.
+name: preproc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - nibabel=5.3.3
+  - nilearn=0.13.1
+  - nipype=1.10.0
+  - pip
+  - pip:
+    - nitime
+    # cvl_utils is installed post-create by the setup script (path is machine-specific)
