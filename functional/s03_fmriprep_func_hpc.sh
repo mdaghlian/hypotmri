@@ -124,6 +124,7 @@ QSUB_CMD="source ~/.bash_profile; \
     source set_project.sh ${PROJ_NAME}; \
     mkdir -p '${REMOTE_LOG_DIR}'; \
     conda activate preproc; \
+    source set_remote_paths.sh;\
     qsub -V \
             -N  '${JOB_NAME}' \
             -o  '${LOG_OUT}' \

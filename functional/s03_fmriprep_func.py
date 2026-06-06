@@ -222,6 +222,8 @@ def run_pipeline(
     print('BOLD files:')
     for f in bold_files:
         print('  - {}'.format(os.path.basename(f)))
+    
+
 
     # ------------------------------------------------------------------
     # Step 3 — Stage BOLD files into FPREP_BIDS
@@ -231,6 +233,12 @@ def run_pipeline(
 
     print('\nCopying BOLD files into FPREP_BIDS...')
     stage_bold_files(bold_files, fprep_func_dir, subject, session)
+
+    # if prep_bids_dir doesn't have an anat folder
+    fprep_anat_dir = os.path.join(fprep_bids_dir, subject, session,'anat')
+    if not os.path.exists(fprep_anat_dir):
+        anat_input_dir = os.path.join(bids_dir,subject,session,'anat')
+        shutil.copytree(anat_input_dir, fprep_anat_dir)
 
     # ------------------------------------------------------------------
     # Step 4 — Run fMRIPrep
