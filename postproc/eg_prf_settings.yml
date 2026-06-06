@@ -10,6 +10,13 @@ vols_to_chop : 4 # Discard the first 4, to match the DM
 # -> PRF fitting information
 n_jobs : 4     # For paralellisation, how many jobs to split off into
 n_batches : 10 # For paralellisation at grid stage...
+fitter_args :
+  method : 'nelder-mead'
+  options : 
+    maxiter : 1000
+    xatol : 1.0e-3
+    fatol : 1.0e-3
+
 grid_nr:       # number of items in grid
   ecc : 10 
   pol : 10

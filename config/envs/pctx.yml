@@ -1,0 +1,12 @@
+name: pctx
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - nibabel=5.3.3
+  - nilearn=0.13.1
+  - pip
+  - pip:
+    - pycortex==1.3.0
+    - git+https://github.com/mdaghlian/dpu_mini.git

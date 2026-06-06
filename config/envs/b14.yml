@@ -1,0 +1,11 @@
+name: b14
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - nibabel=5.3.3
+  - pip
+  - pip:
+    - neuropythy==0.12.16
+    - nitime
