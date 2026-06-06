@@ -143,7 +143,7 @@ QSUB_CMD="source ~/.bash_profile; \
         -N  '${JOB_NAME}' \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
-        -l  h_rt=2:00:00 \
+        -l  h_rt=8:00:00 \
         -l  mem=8G \
         -pe smp 8 \
         -j  n \

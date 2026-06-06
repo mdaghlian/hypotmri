@@ -127,8 +127,8 @@ else
             -N  '${JOB_NAME}' \
             -o  '${LOG_OUT}' \
             -e  '${LOG_ERR}' \
-            -l  h_rt=1:00:00 \
-            -l  mem=16G \
+            -l  h_rt=3:00:00 \
+            -l  mem=8G \
             -pe smp 8 \
             -j  n \
             ${RUNNER_SCRIPT}"
