@@ -20,7 +20,10 @@ if [[ $# -lt 1 ]] ; then
   Usage >&2
   exit 1
 fi
-
+#if link already exists, remove it
+if [[ -L "${PIPELINE_DIR}/config/project_current.sh" ]]; then
+    rm "${PIPELINE_DIR}/config/project_current.sh"
+fi
 ln -sf "${PIPELINE_DIR}/config/project_${1}.sh" "${PIPELINE_DIR}/config/project_current.sh"
 echo "SETTING PROJECT TO ${1}"
 source ${PIPELINE_DIR}/config/config_pipeline.sh
