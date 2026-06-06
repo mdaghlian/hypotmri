@@ -174,10 +174,10 @@ def run_pipeline(
     prf_settings, dm = get_dm_and_settings(task,project)
     input_dir     = str(Path(
         os.path.join(bids_dir, 'derivatives', input_file)
-    ).resolve())
+    ))
     output_dir   = str(Path(
         os.path.join(bids_dir, 'derivatives', output_file)
-    ).resolve())
+    ))
 
     subject_input_dir    = os.path.join(input_dir,     subject, session)
     subject_output_dir   = os.path.join(output_dir,   subject, session)
