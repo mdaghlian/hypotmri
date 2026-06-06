@@ -258,15 +258,15 @@ def process_run(
 
     bold_json  = re.sub(r'\.nii(\.gz)?$', '.json', bold_path)
     topup_json = re.sub(r'\.nii(\.gz)?$', '.json', topup_path)
-    bold_pe    = read_pe_direction(bold_json)
-    topup_pe   = read_pe_direction(topup_json)
+    # bold_pe    = read_pe_direction(bold_json)
+    # topup_pe   = read_pe_direction(topup_json)
 
     print('  Volume information:')
     print('    BOLD volumes      : {}'.format(n_vols_bold))
     print('    Reverse-PE volumes: {}'.format(n_vols_topup))
     print('  Phase encoding:')
-    print('    BOLD PE           : {}'.format(bold_pe))
-    print('    Reverse-PE        : {}'.format(topup_pe))
+    # print('    BOLD PE           : {}'.format(bold_pe))
+    # print('    Reverse-PE        : {}'.format(topup_pe))
 
     start_idx = n_vols_bold - n_vols_topup
     idx_epi   = '[{}..{}]'.format(start_idx, n_vols_bold - 1)
@@ -275,6 +275,9 @@ def process_run(
     print('  BOLD subset for unwarp : {}'.format(idx_epi))
     print('  Reverse-PE subset      : {}'.format(idx_rev))
 
+    #TODO: 1. maybe before the first step, check if the final outputs already exist and skip everything if so? 
+    #TODO: 2. delete intermitent steps outputs at the end of the pipeline, or at least have an option to do so? 
+     
     # ------------------------------------------------------------------
     # Step 1 — Convert BOLD to AFNI format
     # ------------------------------------------------------------------
@@ -540,6 +543,7 @@ def main():
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
     args.sub = "sub-" + args.sub.removeprefix("sub-")
     args.ses = "ses-" + args.ses.removeprefix("ses-")
+    #TODO:add option to just give an input file name and an output file name, and skip the BIDS layout discovery
     run_pipeline(
         bids_dir=args.bids_dir,
         output_file=args.output_file,
