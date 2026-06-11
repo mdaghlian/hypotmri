@@ -88,7 +88,7 @@ done
 Locally 
 ```bash
 $PYPACKAGE_MANAGER activate preproc
-s03_fmriprep_func.sh --sub hp01 --ses 01 \
+s03_fmriprep_func.py --sub hp01 --ses 01 \
     --input-file s2_coreg --bids-dir $BIDS_DIR
 ```
 On the cluster

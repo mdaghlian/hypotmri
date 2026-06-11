@@ -36,13 +36,13 @@ Usage example
 -------------
 s03_cf_prfpy.py \\
     --bids-dir /path/to/bids_dir \\
-    --input-file s04_conf_denoised \\
+    --input-file s4_denoise \\
     --output-file s03_cf_prfpy \\
     --sub 01 \\
     --ses 01 \\
     --task pRFLE \\
     --project hypot
-    --roi-src b14_V1 \\
+    --roi-src b14_V1.label \\
     --roi-target b14_ALL 
 
 """
