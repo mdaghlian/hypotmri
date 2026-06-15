@@ -15,6 +15,26 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def set_project(PROJECT):
+    result = subprocess.run(
+        ['bash', '-c', f'source ~/.bash_profile && source "$PIPELINE_DIR/config/set_project.sh" {PROJECT} && env'],
+        capture_output=True, text=True
+    )
+    for line in result.stdout.splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            os.environ[k] = v
+
+    BIDS_DIR     = str(Path(os.environ['BIDS_DIR']))
+    SUBJECTS_DIR = os.environ.get('SUBJECTS_DIR') or os.path.join(BIDS_DIR, 'derivatives', 'freesurfer')
+    CTX_DIR      = os.environ.get('CTX_DIR') or os.environ.get('PYCTX_DIR', '')
+
+    print(f"Project:     {os.environ.get('PROJ_NAME')}")
+    print(f"BIDS dir:    {BIDS_DIR}")
+    print(f"FreeSurfer:  {SUBJECTS_DIR}")
+    print(f"CTX dir:     {CTX_DIR or '(not set)'}")
+
+
 B14_AREAS = {
         1: 'V1',   2: 'V2',   3: 'V3',   4: 'hV4',
         5: 'VO1',  6: 'VO2',  7: 'LO1',  8: 'LO2',
