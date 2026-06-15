@@ -20,7 +20,7 @@ B14_AREAS = {
         5: 'VO1',  6: 'VO2',  7: 'LO1',  8: 'LO2',
         9: 'TO1', 10: 'TO2', 11: 'V3b', 12: 'V3a',
     }
-def load_benson14_info(sub, fs_dir):
+def load_benson14_info(sub, fs_dir,flip_hemi='lh'):
     ''' Load the benson 14 information
     '''
     
@@ -33,7 +33,15 @@ def load_benson14_info(sub, fs_dir):
             matches = glob.glob(os.path.join(
                     sub_fs_dir, f"{hemi}*benson14*{p}*.mgz"
             ))[0]
-            hemi_p.append(nib.load(matches).get_fdata().squeeze())   
+            arr = nib.load(matches).get_fdata().squeeze()
+            if p == 'angle':
+                # Benson is in degrees. Convert to radians and flip one hemi only.
+                if flip_hemi is not None and hemi == flip_hemi:
+                    arr = -arr 
+                arr = np.deg2rad(arr+90) # rotating and converting so it fits prfpy radians system
+                arr = np.angle(np.exp(1j * arr))
+            hemi_p.append(arr)   
+
         if p=='eccen':
             better_name = 'ecc'
         elif p=='angle':
