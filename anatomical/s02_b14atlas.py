@@ -90,17 +90,18 @@ def main():
     parser = argparse.ArgumentParser(
         description='Extract Benson14 ROI labels directly from .mgz files'
     )
-    parser.add_argument('subject', help='Subject ID (e.g., sub-01)')
+    parser.add_argument('--sub', help='Subject ID (e.g., sub-01)')
     parser.add_argument('-d', '--fsdir', 
                        default=os.environ.get('SUBJECTS_DIR', ''),
                        help='FreeSurfer subjects directory')
     
     args = parser.parse_args()
+    args.sub = "sub-" + args.sub.removeprefix("sub-")
     
     if not args.fsdir:
         parser.error('Set $SUBJECTS_DIR or use --fsdir')
     
-    create_benson14_labels(args.subject, args.fsdir)
+    create_benson14_labels(args.sub, args.fsdir)
     print('Done!')
 
 

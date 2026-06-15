@@ -28,6 +28,7 @@ Valid step names:
     convert_reverse   Step 2
     unwarp            Step 3
     apply_warp_sbref  Step 4
+    sdc_clean         Step 5
 
 Usage example
 -------------
@@ -65,6 +66,7 @@ STEP_KEYS = [
     'convert_reverse',
     'unwarp',
     'apply_warp_sbref',
+    'sdc_clean',
 ]
 
 # unWarpEPIfloat.py -s argument: controls output dir name and dataset prefixes.
@@ -88,14 +90,16 @@ def convert_to_afni(
     """
     # --- Handle input ---
     if nifti_path.endswith('.gz'):
+        # if .nii.gz unzip as _temp.nii & copy to folder
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
         _gunzip_to(nifti_path, tmp_nii)
         src = _container_path(work_dir, out_prefix + '_temp.nii', afni_docker)
     else:
-        dest = os.path.join(work_dir, os.path.basename(nifti_path))
-        if not Path(dest).exists():
-            shutil.copy(nifti_path, dest)
-        src = _container_path(work_dir, os.path.basename(nifti_path), afni_docker)
+        # Otherwise just copy to folder
+        tmp_nii = os.path.join(work_dir, out_prefix + '.nii')
+        if not Path(tmp_nii).exists():
+            shutil.copy(nifti_path, tmp_nii)
+        src = _container_path(work_dir, tmp_nii, afni_docker)
 
     # --- Remove existing AFNI dataset if present ---
     head = Path(work_dir) / f"{out_prefix}+orig.HEAD"
@@ -112,7 +116,6 @@ def convert_to_afni(
         docker_image=afni_docker,
         cmd=['3dcopy', src, dst],
     )
-
     # --- Cleanup temp ---
     if nifti_path.endswith('.gz'):
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
@@ -212,6 +215,41 @@ def apply_warp_to_sbref(
     )
     
     return sdc_sbref
+
+
+def _find_forward_warp(work_dir: str) -> str:
+    """
+    Locate the forward warp produced by unWarpEPIfloat.py.
+
+    Checks the copy persisted directly in *work_dir* first (kept around by
+    sdc_clean), falling back to unWarpOutput_TS/ if cleanup hasn't run yet.
+    Returns '' if no forward warp can be found.
+    """
+    matches = glob.glob(os.path.join(work_dir, '*_Forward_WARP.nii.gz'))
+    if not matches:
+        matches = glob.glob(os.path.join(
+            work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID), '*_Forward_WARP.nii.gz'))
+    return matches[0] if matches else ''
+
+
+def sdc_clean(work_dir: str, keep_paths: list) -> list:
+    """
+    Remove everything directly inside *work_dir* except the paths in
+    *keep_paths*.  Returns the list of removed paths.
+    """
+    keep = {str(Path(p).resolve()) for p in keep_paths if p}
+    removed = []
+    for entry in sorted(Path(work_dir).iterdir()):
+        if str(entry.resolve()) in keep:
+            continue
+        removed.append(str(entry))
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Per-run pipeline
 # ---------------------------------------------------------------------------
@@ -250,6 +288,24 @@ def process_run(
     def _out(suffix, ext='.nii.gz'):
         return build_output_name(work_dir, subject, session, suffix, extension=ext)
 
+    # Working copies (live in work_dir while processing this run) and final
+    # copies (promoted to subject_output_dir, alongside the other runs —
+    # this is what's left once sdc_clean removes the per-run duplicates).
+    unwarp_out  = _out('{}_sdc_bold'.format(run_suffix))
+    sdc_sbref   = _out('{}_sdc_sbref'.format(run_suffix))
+    final_bold  = os.path.join(subject_output_dir, os.path.basename(unwarp_out))
+    final_sbref = os.path.join(subject_output_dir, os.path.basename(sdc_sbref))
+
+    # If the final outputs already exist (in work_dir or already promoted),
+    # the AFNI +orig conversions (Steps 1-2) may have been removed by
+    # sdc_clean — skip regenerating them unless unwarp is being forced
+    # (which needs bold+orig / reverse+orig to exist).
+    skip_conversions = (
+        not ow['unwarp']
+        and (Path(unwarp_out).exists() or Path(final_bold).exists())
+        and (Path(sdc_sbref).exists() or Path(final_sbref).exists())
+    )
+
     # ------------------------------------------------------------------
     # Metadata
     # ------------------------------------------------------------------
@@ -286,11 +342,11 @@ def process_run(
     bold_afni = os.path.join(work_dir, 'bold+orig.HEAD')
 
     if not check_skip({'bold_afni': bold_afni}, ow['convert_bold'],
-                      'Step 1: convert BOLD to AFNI'):
+                      'Step 1: convert BOLD to AFNI',
+                      force_skip=skip_conversions):
         convert_to_afni(bold_path, 'bold', safe_work_dir, afni_docker)
 
     print('    -> {}'.format(bold_afni))
-
     # ------------------------------------------------------------------
     # Step 2 — Convert reverse-PE to AFNI format
     # ------------------------------------------------------------------
@@ -299,7 +355,8 @@ def process_run(
     reverse_afni = os.path.join(work_dir, 'reverse+orig.HEAD')
 
     if not check_skip({'reverse_afni': reverse_afni}, ow['convert_reverse'],
-                      'Step 2: convert reverse-PE to AFNI'):
+                      'Step 2: convert reverse-PE to AFNI',
+                      force_skip=skip_conversions):
         convert_to_afni(topup_path, 'reverse', safe_work_dir, afni_docker)
 
     print('    -> {}'.format(reverse_afni))
@@ -309,9 +366,11 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 3] Running unWarpEPIfloat.py...')
 
-    unwarp_out = _out('{}_sdc_bold'.format(run_suffix))
+    # unwarp_out (work_dir) or final_bold (already promoted + cleaned) —
+    # whichever exists indicates this step has already been done.
+    unwarp_target = unwarp_out if Path(unwarp_out).exists() else final_bold
 
-    if not check_skip({'unwarp_out': unwarp_out}, ow['unwarp'],
+    if not check_skip({'unwarp_out': unwarp_target}, ow['unwarp'],
                       'Step 3: unWarpEPIfloat'):
         # Remove stale unWarpOutput_TS — script refuses to run if it exists
         stale = os.path.join(safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID))
@@ -326,8 +385,8 @@ def process_run(
         )
         shutil.copy(unwarp_nii, unwarp_out)
     else:
-        unwarp_nii = glob.glob(os.path.join(
-            safe_work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID), '06_*_HWV.nii.gz'))[0]
+        # Resolved lazily in Step 4, only if it's actually needed there.
+        unwarp_nii = None
 
     print('    -> {}'.format(unwarp_out))
 
@@ -336,18 +395,24 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 4] Applying warp to SBREF...')
 
-    sdc_sbref = _out('{}_sdc_sbref'.format(run_suffix)) # output sdc sbref
-    print(os.listdir(os.path.join(work_dir, 'unWarpOutput_TS')))
-    # - find the correct warp file from previous step
-    fwd_warp_matches = glob.glob(os.path.join(
-        work_dir, 'unWarpOutput_{}'.format(_UNWARP_SID),
-        '*_Forward_WARP.nii.gz'))[0]
-    if not check_skip({'sdc_sbref': sdc_sbref}, ow['apply_warp_sbref'],
+    # sdc_sbref (work_dir) or final_sbref (already promoted + cleaned) —
+    # whichever exists indicates this step has already been done.
+    sbref_target = sdc_sbref if Path(sdc_sbref).exists() else final_sbref
+
+    # - find the forward warp produced by Step 3
+    fwd_warp_match = _find_forward_warp(work_dir)
+    if not check_skip({'sdc_sbref': sbref_target}, ow['apply_warp_sbref'],
                     'Step 4: apply warp to SBREF'):
-        if fwd_warp_matches:
+        if unwarp_nii is None:
+            # unwarp_out is itself a copy of 06_*_HWV.nii.gz, so it (or the
+            # promoted final_bold, restaged) can stand in as the reference
+            # even after unWarpOutput_TS has been cleaned up.
+            unwarp_nii = unwarp_out if Path(unwarp_out).exists() \
+                else _stage(final_bold, work_dir)
+        if fwd_warp_match:
             result = apply_warp_to_sbref(
                 sbref_path=sbref_path,
-                warp_file=fwd_warp_matches,
+                warp_file=fwd_warp_match,
                 master_path=unwarp_nii, # - use the output as the reference
                 work_dir=safe_work_dir,
                 afni_docker=afni_docker,
@@ -357,10 +422,47 @@ def process_run(
             print('    [warn] Warp file not found — copying original SBREF as placeholder.')
             shutil.copy(sbref_path, sdc_sbref)
     print('    -> {}'.format(sdc_sbref))
-    # shutil.rmtree(work_dir)
+
+    # ------------------------------------------------------------------
+    # Promote fresh outputs to the subject-level output directory
+    # ------------------------------------------------------------------
+    for src, dst in ((unwarp_out, final_bold), (sdc_sbref, final_sbref)):
+        if Path(src).exists():
+            shutil.copy(src, dst)
+            print('  Copied {} -> {}'.format(os.path.basename(src), subject_output_dir))
+
+    # ------------------------------------------------------------------
+    # Step 5 — Remove intermediate files (including the per-run copies of
+    # sdc_bold / sdc_sbref, which now live in subject_output_dir)
+    # ------------------------------------------------------------------
+    print('\n  [Step 5] Cleaning up intermediate files...')
+
+    # Persist the forward warp at the top of work_dir (used to apply this
+    # run's SDC to other images) before everything else is removed.
+    fwd_warp_match = _find_forward_warp(work_dir)
+    fwd_warp_keep = None
+    if fwd_warp_match:
+        fwd_warp_keep = os.path.join(work_dir, os.path.basename(fwd_warp_match))
+        if str(Path(fwd_warp_match).resolve()) != str(Path(fwd_warp_keep).resolve()):
+            shutil.copy(fwd_warp_match, fwd_warp_keep)
+
+    keep_paths = [fwd_warp_keep]
+    already_clean = sorted(p.name for p in Path(work_dir).iterdir()) == \
+        sorted(os.path.basename(p) for p in keep_paths if p)
+
+    if not ow['sdc_clean'] and already_clean:
+        print('  [skip] Step 5: sdc_clean — already clean.')
+    else:
+        removed = sdc_clean(work_dir, keep_paths)
+        for p in removed:
+            print('    removed {}'.format(os.path.basename(p)))
+        if keep_paths:
+            print('    -> kept: {}'.format(
+                ', '.join(os.path.basename(p) for p in keep_paths if p)))
+
     return {
-        'sdc_bold':  unwarp_out,
-        'sdc_sbref': sdc_sbref,
+        'sdc_bold':  final_bold,
+        'sdc_sbref': final_sbref,
     }
 
 
@@ -485,17 +587,6 @@ def run_pipeline(
         key = run_label if run_label else 'run-{:02d}'.format(run_idx)
         all_results[key] = run_results
         print('\n  Run {} completed.'.format(run_idx))
-        key = run_label if run_label else 'run-{:02d}'.format(run_idx)
-        all_results[key] = run_results
-        print('\n  Run {} completed.'.format(run_idx))
-
-        # Copy SDC outputs to subject-level output directory
-        for out_key, src_path in run_results.items():
-            if src_path and Path(src_path).exists():
-                dst_path = os.path.join(subject_output_dir, os.path.basename(src_path))
-                shutil.copy(src_path, dst_path)
-                print('  Copied {} -> {}'.format(os.path.basename(src_path),
-                                                subject_output_dir))
 
 
     print('\n' + '=' * 55)
@@ -520,7 +611,7 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument('--output-file', required=True, help='Output derivatives file')
     req.add_argument('--sub',        required=True, help='Subject label (e.g. sub-01)')
     p.add_argument('--ses',          default='ses-01', help='Session label')
-    p.add_argument('--task',         default='',       help='Task label')
+    p.add_argument('--task',         required=True, help='Task label')
     p.add_argument('--afni-docker',
                    default=os.environ.get('AFNI_IMAGE', 'afni/afni_make_build:latest'),
                    help='AFNI Docker image tag, or "local" to run on host')
