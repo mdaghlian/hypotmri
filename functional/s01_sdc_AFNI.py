@@ -90,14 +90,16 @@ def convert_to_afni(
     """
     # --- Handle input ---
     if nifti_path.endswith('.gz'):
+        # if .nii.gz unzip as _temp.nii & copy to folder
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
         _gunzip_to(nifti_path, tmp_nii)
         src = _container_path(work_dir, out_prefix + '_temp.nii', afni_docker)
     else:
-        dest = os.path.join(work_dir, os.path.basename(nifti_path))
-        if not Path(dest).exists():
-            shutil.copy(nifti_path, dest)
-        src = _container_path(work_dir, os.path.basename(nifti_path), afni_docker)
+        # Otherwise just copy to folder
+        tmp_nii = os.path.join(work_dir, out_prefix + '.nii')
+        if not Path(tmp_nii).exists():
+            shutil.copy(nifti_path, tmp_nii)
+        src = _container_path(work_dir, tmp_nii, afni_docker)
 
     # --- Remove existing AFNI dataset if present ---
     head = Path(work_dir) / f"{out_prefix}+orig.HEAD"
@@ -114,7 +116,6 @@ def convert_to_afni(
         docker_image=afni_docker,
         cmd=['3dcopy', src, dst],
     )
-
     # --- Cleanup temp ---
     if nifti_path.endswith('.gz'):
         tmp_nii = os.path.join(work_dir, out_prefix + '_temp.nii')
@@ -346,7 +347,6 @@ def process_run(
         convert_to_afni(bold_path, 'bold', safe_work_dir, afni_docker)
 
     print('    -> {}'.format(bold_afni))
-
     # ------------------------------------------------------------------
     # Step 2 — Convert reverse-PE to AFNI format
     # ------------------------------------------------------------------
