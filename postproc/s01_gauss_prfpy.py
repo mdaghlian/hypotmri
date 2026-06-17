@@ -315,6 +315,8 @@ def run_pipeline(
         for key in gaussp_keys.keys():
             grid_dict[key] = gfit.gridsearch_params[:,gaussp_keys[key]]
         grid_pd = pd.DataFrame(grid_dict)
+        grid_pd['ecc'], grid_pd ['pol'] = dpu_coord_convert(
+                grid_pd ['mu_x'],grid_pd ['mu_y'],'cart2pol') 
         grid_pd.to_csv(grid_csv)
         grid_pars_np = gfit.gridsearch_params
     else:
@@ -350,6 +352,8 @@ def run_pipeline(
         iter_dict['index'] = roi_idx
         for key in gaussp_keys.keys():
             iter_dict[key] = gfit.iterative_search_params[:,gaussp_keys[key]]
+        iter_pd['ecc'], iter_pd ['pol'] = dpu_coord_convert(
+                iter_pd ['mu_x'],iter_pd ['mu_y'],'cart2pol')
         iter_pd = pd.DataFrame(iter_dict)
         iter_pd.to_csv(iter_csv)
         print(f'Mean r2 = {iter_pd["rsq"].mean():.3f}')
