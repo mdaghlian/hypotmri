@@ -823,7 +823,7 @@ def run_pipeline(
       - fMRIprep confounds .tsv and brainmask are NOT required in this mode.
 
     The moco_file directory is expected to contain:
-      - *bold*.nii.gz           – motion-corrected BOLD volumes
+      - *bold.nii.gz           – motion-corrected BOLD volumes
       - *mcflirt_motion*.par    – MCFLIRT .par files (not needed in filter_only mode)
       - *hemi-L*.func.gii       – left-hemisphere surface timeseries
       - *hemi-R*.func.gii       – right-hemisphere surface timeseries
@@ -903,7 +903,7 @@ def run_pipeline(
     # Discover BOLD runs in the moco directory
     # ------------------------------------------------------------------
     bold_pattern = os.path.join(
-        subject_input_dir, '{}_{}*bold*.nii*'.format(subject, session))
+        subject_input_dir, '{}_{}*bold.nii*'.format(subject, session))
     bold_files = sorted(glob.glob(bold_pattern))
 
     if not bold_files:
