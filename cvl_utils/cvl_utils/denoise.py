@@ -109,7 +109,7 @@ class PCA_denoiser():
         """
         
         # -- MD ADDED
-        # data = self.lf_filter.filter_data(data.T).T
+        data = self.lf_filter.filter_data(data.T).T
         # --
 
 

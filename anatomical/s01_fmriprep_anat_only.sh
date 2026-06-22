@@ -12,6 +12,7 @@ usage() {
     echo "  --bids-dir      Path BIDS directory "
     echo "  --sub           Subject label (e.g., sub-01)"
     echo "  --ses           Session label (e.g., ses-01)"
+    echo "  --suffix        Suffix for folders, if want to test without overwrite"
     echo ""
     echo "Optional Arguments:"
     echo "  --help          Display this help message"
@@ -27,13 +28,14 @@ usage() {
 # [2] Copy the anatomical (T1w) from BIDS_DIR/SUBJECTS/SESSION/anat
 # [3] Run fmriprep
 # --- --- --- --- 
-
+SUFFIX=""
 # --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids-dir)         BIDS_DIR="$2"; shift 2 ;;
         --sub)              SUBJECT="$2"; shift 2 ;;
         --ses)              SESSION="$2"; shift 2 ;;
+        --suffix)           SUFFIX="$2"; shift 2 ;;
         --help)             usage ;;
         *)                  echo "Unknown argument: $1"; usage ;;
     esac
@@ -53,11 +55,11 @@ echo " Session:   $SESSION"
 echo "-------------------------------------------------------"
 
 # [1] Create FPREP BIDS
-FPREP_BIDS_DIR=$BIDS_DIR/derivatives/FPREP_BIDS
+FPREP_BIDS_DIR="${BIDS_DIR}/derivatives/FPREP_BIDS${SUFFIX}"
 if [[ ! -d "${FPREP_BIDS_DIR}" ]]; then
     mkdir -p ${FPREP_BIDS_DIR}
 fi 
-FPREP_BIDS_DIR_WF=${BIDS_DIR}/derivatives/FPREP_BIDS_WF
+FPREP_BIDS_DIR_WF="${BIDS_DIR}/derivatives/FPREP_BIDS_WF${SUFFIX}"
 if [[ ! -d "${FPREP_BIDS_DIR_WF}" ]]; then
     mkdir -p $FPREP_BIDS_DIR_WF
 fi 
@@ -69,7 +71,7 @@ fi
 
 # -> Create freesurfer output, if it doesn't exist
 # Note this is inside the "true" BIDS_DIR 
-SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer"
+SUBJECTS_DIR="${BIDS_DIR}/derivatives/freesurfer${SUFFIX}"
 if [[ ! -d "${SUBJECTS_DIR}" ]]; then
     mkdir -p "${SUBJECTS_DIR}"
 fi
@@ -84,11 +86,13 @@ echo "Copying anatomy"
 ANAT_SRC="${BIDS_DIR}/${SUBJECT}/${SESSION}/anat"
 cp -r ${ANAT_SRC} ${FPREP_SES}/
 echo "running fprep in ${FPREP_BIDS_DIR} and ${FPREP_SIF}"
-[[ ! -d "${BIDS_DIR}/derivatives/fmriprep" ]] && mkdir -p "${BIDS_DIR}/derivatives/fmriprep"
+FPREP_OUT="${BIDS_DIR}/derivatives/fmriprep${SUFFIX}"
+[[ ! -d "${FPREP_OUT}" ]] && mkdir -p "${FPREP_OUT}"
+
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then
     docker run --rm \
       -v $FPREP_BIDS_DIR:/data:ro \
-      -v $BIDS_DIR/derivatives/fmriprep:/out \
+      -v $FPREP_OUT:/out \
       -v $FPREP_BIDS_DIR_WF:/work \
       -v $SUBJECTS_DIR:/fsdir \
       -v $PIPELINE_DIR/config/license.txt:/license.txt \
@@ -106,7 +110,7 @@ elif [[ "$CONTAINER_TYPE" == "apptainer" || "$CONTAINER_TYPE" == "singularity" ]
     ${CONTAINER_TYPE} run \
       --cleanenv \
       -B $FPREP_BIDS_DIR:/data \
-      -B $BIDS_DIR/derivatives/fmriprep:/out \
+      -B $FPREP_OUT:/out \
       -B $FPREP_BIDS_DIR_WF:/work \
       -B $SUBJECTS_DIR:/fsdir \
       -B $PIPELINE_DIR/config/license.txt:/license.txt \

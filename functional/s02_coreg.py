@@ -803,7 +803,7 @@ def process_run(
             sbref2fs_fslmat=sbref2fs_fslmat,
             combined_mats_dir=combined_mats_dir_work,
             work_dir=safe_work_dir,
-            docker_image='local',
+            docker_image=docker_image,
         )
         if Path(combined_mats_dir_final).exists():
             shutil.rmtree(combined_mats_dir_final)

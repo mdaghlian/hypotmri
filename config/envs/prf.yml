@@ -13,6 +13,7 @@ dependencies:
   - nibabel=5.3.3
   - nilearn=0.13.1
   - statsmodels
+  - PyYaml
   # git packages (prfpy, dpu_mini, cvl_utils) are installed post-create by the setup script
   # using --no-build-isolation so pip sees the conda-installed packages and avoids
   # recompiling C extensions (which fails with ICC on HPC)

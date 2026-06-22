@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import nibabel as nib
 
-def create_benson14_labels(subject, fsdir):
+def create_benson14_labels(subject, fsdir, overwrite=False):
     """Extract Benson14 ROI labels directly from .mgz files."""
     
     B14_AREAS = {
@@ -28,7 +28,7 @@ def create_benson14_labels(subject, fsdir):
     varea_files = [os.path.join(surf_dir, f'{h}.benson14_varea.mgz') 
                    for h in ['lh', 'rh']]
     
-    if not all(os.path.exists(f) for f in varea_files):
+    if (not all(os.path.exists(f) for f in varea_files)) or overwrite:
         print(f"Generating Benson14 atlas...")
         os.system(f'python -m neuropythy atlas {subject} --verbose')
     
@@ -40,7 +40,12 @@ def create_benson14_labels(subject, fsdir):
         if not os.path.exists(varea_file):
             print(f'  Warning: {varea_file} not found')
             continue
-        
+
+        all_file = os.path.join(label_dir, f'{hemi}.b14_ALL.label')
+        if os.path.exists(all_file) and not overwrite:
+            print(f'  Skipping {hemi} (labels already exist, use --overwrite to regenerate)')
+            continue
+
         # Load varea data and surface coordinates
         varea_data = nib.load(varea_file).get_fdata().squeeze()
         coords, _ = nib.freesurfer.read_geometry(white_surf)
@@ -76,7 +81,6 @@ def create_benson14_labels(subject, fsdir):
 
         # Create combined ALL label
         all_vertices = np.where(np.isin(varea_data, list(B14_AREAS.keys())))[0]
-        all_file = os.path.join(label_dir, f'{hemi}.b14_ALL.label')
         with open(all_file, 'w') as f:
             f.write(header)
             f.write(f'{len(all_vertices)}\n')
@@ -91,17 +95,18 @@ def main():
         description='Extract Benson14 ROI labels directly from .mgz files'
     )
     parser.add_argument('--sub', help='Subject ID (e.g., sub-01)')
-    parser.add_argument('-d', '--fsdir', 
+    parser.add_argument('-d', '--fsdir',
                        default=os.environ.get('SUBJECTS_DIR', ''),
                        help='FreeSurfer subjects directory')
-    
+    parser.add_argument('--overwrite', action='store_true',
+                       help='Regenerate the Benson14 atlas and labels even if outputs already exist')
     args = parser.parse_args()
     args.sub = "sub-" + args.sub.removeprefix("sub-")
-    
+
     if not args.fsdir:
         parser.error('Set $SUBJECTS_DIR or use --fsdir')
-    
-    create_benson14_labels(args.sub, args.fsdir)
+
+    create_benson14_labels(args.sub, args.fsdir, overwrite=args.overwrite)
     print('Done!')
 
 
