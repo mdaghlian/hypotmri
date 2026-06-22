@@ -84,6 +84,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import pandas as pd
+from nilearn.image import resample_to_img
 from nipype.algorithms.confounds import FramewiseDisplacement, ComputeDVARS
 
 from scipy.signal import savgol_filter
@@ -222,6 +223,21 @@ def extract_mcflirt_confounds(
     # [3] DVARS via nipype, using the fmriprep brainmask
     # ------------------------------------------------------------------
     mcf_nii_stage = _stage(mcf_nii, work_dir)
+
+    # The fMRIprep brainmask is often on a different voxel grid than the
+    # moco/bbreg BOLD (e.g. FreeSurfer-conformed 256^3 vs native-res BOLD).
+    # Resample the mask onto the BOLD's grid (same world space) so nipype's
+    # boolean indexing in compute_dvars lines up.
+    bold_img = nib.load(mcf_nii_stage)
+    mask_img = nib.load(brainmask)
+    if mask_img.shape[:3] != bold_img.shape[:3]:
+        mask_img = resample_to_img(
+            mask_img, bold_img, interpolation='nearest', force_resample=True,
+            copy_header=True,
+        )
+        brainmask_resampled = os.path.join(work_dir, 'brainmask_resampled.nii.gz')
+        nib.save(mask_img, brainmask_resampled)
+        brainmask = brainmask_resampled
 
     dvars_node = ComputeDVARS(
         in_file=mcf_nii_stage,
