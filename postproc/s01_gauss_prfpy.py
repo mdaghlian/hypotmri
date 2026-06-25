@@ -352,9 +352,9 @@ def run_pipeline(
         iter_dict['index'] = roi_idx
         for key in gaussp_keys.keys():
             iter_dict[key] = gfit.iterative_search_params[:,gaussp_keys[key]]
+        iter_pd = pd.DataFrame(iter_dict)
         iter_pd['ecc'], iter_pd ['pol'] = dpu_coord_convert(
                 iter_pd ['mu_x'],iter_pd ['mu_y'],'cart2pol')
-        iter_pd = pd.DataFrame(iter_dict)
         iter_pd.to_csv(iter_csv)
         print(f'Mean r2 = {iter_pd["rsq"].mean():.3f}')
     
