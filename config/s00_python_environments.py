@@ -134,9 +134,9 @@ def _install_prf(prefix: Path | None, clean: bool, update: bool, suffix: str = "
             "git+https://github.com/mdaghlian/prfpy.git",
             "git+https://github.com/mdaghlian/dpu_mini.git",
         ]:
-            _conda_run(name, prefix, ["pip", "install", "--no-build-isolation", pkg]) #"--no-deps", pkg])
+            _conda_run(name, prefix, ["pip", "install", "--no-build-isolation", pkg]) 
         _conda_run(name, prefix, [
-            "pip", "install", "-e", str(PIPELINE_DIR / "cvl_utils"), "--no-deps"
+            "pip", "install", "-e", str(PIPELINE_DIR / "cvl_utils"),
         ])
 
 
