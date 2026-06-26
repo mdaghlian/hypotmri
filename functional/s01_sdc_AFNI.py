@@ -257,7 +257,7 @@ def sdc_clean(work_dir: str, keep_paths: list) -> list:
 def process_run(
     bold_path: str,
     topup_path: str,
-    sbref_path: str,
+    sbref_path: str | None,
     subject: str,
     session: str,
     task: str,
@@ -303,7 +303,8 @@ def process_run(
     skip_conversions = (
         not ow['unwarp']
         and (Path(unwarp_out).exists() or Path(final_bold).exists())
-        and (Path(sdc_sbref).exists() or Path(final_sbref).exists())
+        and (sbref_path is None
+             or Path(sdc_sbref).exists() or Path(final_sbref).exists())
     )
 
     # ------------------------------------------------------------------
@@ -395,33 +396,36 @@ def process_run(
     # ------------------------------------------------------------------
     print('\n  [Step 4] Applying warp to SBREF...')
 
-    # sdc_sbref (work_dir) or final_sbref (already promoted + cleaned) —
-    # whichever exists indicates this step has already been done.
-    sbref_target = sdc_sbref if Path(sdc_sbref).exists() else final_sbref
+    if sbref_path is None:
+        print('    [skip] Step 4: apply warp to SBREF — no SBREF available for this run.')
+    else:
+        # sdc_sbref (work_dir) or final_sbref (already promoted + cleaned) —
+        # whichever exists indicates this step has already been done.
+        sbref_target = sdc_sbref if Path(sdc_sbref).exists() else final_sbref
 
-    # - find the forward warp produced by Step 3
-    fwd_warp_match = _find_forward_warp(work_dir)
-    if not check_skip({'sdc_sbref': sbref_target}, ow['apply_warp_sbref'],
-                    'Step 4: apply warp to SBREF'):
-        if unwarp_nii is None:
-            # unwarp_out is itself a copy of 06_*_HWV.nii.gz, so it (or the
-            # promoted final_bold, restaged) can stand in as the reference
-            # even after unWarpOutput_TS has been cleaned up.
-            unwarp_nii = unwarp_out if Path(unwarp_out).exists() \
-                else _stage(final_bold, work_dir)
-        if fwd_warp_match:
-            result = apply_warp_to_sbref(
-                sbref_path=sbref_path,
-                warp_file=fwd_warp_match,
-                master_path=unwarp_nii, # - use the output as the reference
-                work_dir=safe_work_dir,
-                afni_docker=afni_docker,
-            )
-            shutil.copy(result, sdc_sbref)
-        else:
-            print('    [warn] Warp file not found — copying original SBREF as placeholder.')
-            shutil.copy(sbref_path, sdc_sbref)
-    print('    -> {}'.format(sdc_sbref))
+        # - find the forward warp produced by Step 3
+        fwd_warp_match = _find_forward_warp(work_dir)
+        if not check_skip({'sdc_sbref': sbref_target}, ow['apply_warp_sbref'],
+                        'Step 4: apply warp to SBREF'):
+            if unwarp_nii is None:
+                # unwarp_out is itself a copy of 06_*_HWV.nii.gz, so it (or the
+                # promoted final_bold, restaged) can stand in as the reference
+                # even after unWarpOutput_TS has been cleaned up.
+                unwarp_nii = unwarp_out if Path(unwarp_out).exists() \
+                    else _stage(final_bold, work_dir)
+            if fwd_warp_match:
+                result = apply_warp_to_sbref(
+                    sbref_path=sbref_path,
+                    warp_file=fwd_warp_match,
+                    master_path=unwarp_nii, # - use the output as the reference
+                    work_dir=safe_work_dir,
+                    afni_docker=afni_docker,
+                )
+                shutil.copy(result, sdc_sbref)
+            else:
+                print('    [warn] Warp file not found — copying original SBREF as placeholder.')
+                shutil.copy(sbref_path, sdc_sbref)
+        print('    -> {}'.format(sdc_sbref))
 
     # ------------------------------------------------------------------
     # Promote fresh outputs to the subject-level output directory
@@ -462,7 +466,7 @@ def process_run(
 
     return {
         'sdc_bold':  final_bold,
-        'sdc_sbref': final_sbref,
+        'sdc_sbref': final_sbref if sbref_path is not None else None,
     }
 
 
@@ -560,16 +564,16 @@ def run_pipeline(
         if not topup_matches:
             raise FileNotFoundError(
                 'No reverse-PE EPI found for {}.'.format(bold_path))
-        if not sbref_matches:
-            raise FileNotFoundError(
-                'No SBREF found for {}.'.format(bold_path))
 
         topup_path = topup_matches[0]
-        sbref_path = sbref_matches[0]
+        sbref_path = sbref_matches[0] if sbref_matches else None
 
         print('  BOLD      : {}'.format(bold_path))
         print('  Reverse-PE: {}'.format(topup_path))
-        print('  SBREF     : {}'.format(sbref_path))
+        if sbref_path:
+            print('  SBREF     : {}'.format(sbref_path))
+        else:
+            print('  SBREF     : [not found] — skipping Step 4 for this run.')
 
         run_results = process_run(
             bold_path=bold_path,
