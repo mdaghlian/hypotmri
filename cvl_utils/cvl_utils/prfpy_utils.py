@@ -1,15 +1,21 @@
+import os,glob,sys,yaml
+opj = os.path.join
 import numpy as np
-import os
-opj = os.path.join
-import matplotlib.image as mpimg
-from scipy import io, interpolate
-from scipy.ndimage import zoom
-import glob
-import yaml 
+import pandas as pd
+from copy import deepcopy
 
-opj = os.path.join
+import matplotlib.pyplot as plt
 
-from cvl_utils.prf_utils import *
+from prfpy.rf import gauss2D_iso_cart
+from dpu_mini.stats import dpu_coord_convert, dpu_pol_to_clock, dpu_weighted_mean
+from dpu_mini.plot_functions import (
+    dpu_add_ax_basics,
+    dpu_visual_field_scatter,
+    dpu_scatter,
+    dpu_multi_scatter,
+    dpu_arrow_plot,
+)
+
 
 def prfpy_params_dict():
     '''
@@ -160,24 +166,6 @@ def make_vx_wise_bounds(n_vx, bounds_in, **kwargs):
 
     return vx_wise_bounds
 
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-import os
-import pandas as pd
-import pickle
-from copy import deepcopy
-import sys
-opj = os.path.join
-
-from prfpy.csenf_plot_functions import *
-from prfpy.csenf_plot_functions import ncsf_calculate_aulcsf, ncsf_calculate_sfmax
-
-from dpu_mini.utils import *
-from dpu_mini.stats import *
-from dpu_mini.plot_functions import *
-
 def quick_rf(x, y, size, **kwargs):
     '''quick_rf
     Quick calculation of a gaussian rf
@@ -285,22 +273,6 @@ class Prf1T1M(object):
             self.params_dd['bd_ratio'] = self.params_dd['neural_baseline'] / self.params_dd['surround_baseline']
             # Suppression index 
             self.params_dd['sup_idx'] = (self.params_dd['prf_amplitude'] * self.params_dd['prf_size']**2) / (self.params_dd['srf_amplitude'] * self.params_dd['srf_size']**2)
-        if self.model=='csf':
-            self.params_dd['log10_SFp'] = np.log10(self.params_dd['SFp'])
-            self.params_dd['log10_CSp'] = np.log10(self.params_dd['CSp'])
-            self.params_dd['log10_crf_exp'] = np.log10(self.params_dd['crf_exp'])
-            self.params_dd['sfmax'] = ncsf_calculate_sfmax(
-                self.params_dd['width_r'],
-                self.params_dd['SFp'],
-                self.params_dd['CSp'],
-            )
-            self.params_dd['log10_sfmax'] = np.log10(self.params_dd['sfmax'])
-            self.params_dd['aulcsf'] = ncsf_calculate_aulcsf(
-                self.params_dd['width_r'],
-                self.params_dd['SFp'],
-                self.params_dd['CSp'],    
-                self.params_dd['width_l'],            
-            )
 
         # Convert to PD           
         self.pd_params = pd.DataFrame(self.params_dd)
