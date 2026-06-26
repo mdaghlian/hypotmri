@@ -231,11 +231,12 @@ def percent_change(ts, baseline=20):
     elif isinstance(baseline, np.ndarray):        
         # Is the baseline an array? Then convert to list 
         baseline = list(baseline)
-
-    if isinstance(baseline, list):
+    elif isinstance(baseline, list):
         # Is the baseline a list?
         # Then use the specified indices as the timepoints for finding the median baseline
         median_baseline = np.median(ts_m[:, baseline], axis=t_dim)    
+    else:
+        median_baseline = np.median(ts_m,axis=t_dim)
 
     # subtract
     psc = ts_m-median_baseline[..., np.newaxis]
