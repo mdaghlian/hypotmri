@@ -1,102 +1,104 @@
 # Pipeline for processing hypotony data
 
-TODO:
-
-[] setup+installation instructions + bidsifying 
-
-[] In general improve the session name handling
-
-[] Better docs; examples QC popups
-
-[] Containerisation 
-
-
 ## setup - full details [./config/local_setup.md](./config/local_setup.md)
 In brief: 
-- Install requires a python package manager of your choice (mamba/conda) & docker (or singularity)
+- Install requires a python package manager of your choice (mamba/conda) & container manager (docker/singularity or apptainer)
 - Scripts in /config manage most of the software installation
 - Other (soft) requirements are freesurfer - though you maybe able to also run this with a container
 - I also suggest having your favourite MRI viewer (e.g., fsleyes) available, as well as an IDE for editing code + notebooks (e.g., vscode) 
 
 
-### [2] BIDS(ish)ification - TODO
+## Pipeline overview
+
+### [0] BIDS(ish)ification - TODO
 
 ## anatomical
-### [1] s01_fmriprep_anat_only
-- Input: MP2RAGE T1w scan, in subject folder
-- Output: Freesurfer surfaces + segmentations in fmriprep folder 
-	- /BIDS/derivatives/fmriprep/sub-00/ses-fprep/anat
-	- /BIDS/derivatives/freesurfer/sub-00
-	- /BIDS/derivatives/freesurfer/sub-00_ses-fprep 
+### [1] s01_fmriprep_anat_only.sh
+- Input: MPRAGE T1w scan, in subject folder
+- Output: Freesurfer surfaces + anatomical outputs from fmriprep 
 	- *note - fmriprep now forces freesurfer subject name to include session. To get around this we symlink a short subject name to the full one. Hence both files appear in directory*
-### [2] s02_b14atlas
+
+### [2] s02_b14atlas.py
 - Input: Subject freesurfer folder
 - Output: Benson atlas ROI definitions & eccentricity + polar angle estimates (inside freesurfer folder)
-### [3] Autoflatten (*may remove from final pipeline*)
+
+### [3] Autoflatten (*optional - may remove*)
 - Input: Subject freesurfer folder
 - Output: flattened cortical files
 
-### [4] Pycortex (*may remove from final pipeline*)
+### [4] Pycortex (*optional - may remove from final pipeline*)
 - Input: Subject freesurfer folder
 - Output: pycortex folder with flat maps & automatically drawn b14 ROIs
 
-
-# ---- REST NOT FULLY IMPLEMENTED ----
-
-### [4] s04_pycortex (*may remove from final pipeline*)
-- Input: Subject freesurfer folder
-- Output: Pycortex files, for quick flattening & visualization
-
-
-
-
-
-
 ## functional
 
-### [1] s01_sdc
+### [1] s01_sdc_AFNI.py
 - Input: 
-	- "func" folder 
-		- including "\_bold.nii", "\_sbref.nii"
-	- "fmap" folder, including
-		- topup/blip-down scans ("\_topup.nii")
-- Intermediates:
-	- Also includes calculated warps etc. and a bunch of other stuff. May remove later
+	- functional files *_bold; single band reference (if available) *_sbref; phase reversed epis   
 - Output
-	- "func_sdc" folder
 	- susceptibility distortion corrected files sbref & bold
 
-### [2] s02_bbreg_mcflirt
+### [2] s02_coreg.py
+Motion corection plus alignment: 
+- Volume -> Bref_i -> Bref_main -> Freesurfer anatomy
+
+Per run each volume, is aligned to the corresponding runs "bref" - this can either be the single band reference file, or will be take a single volume from the run. 
+
+Each runs - "bref" is registered to a "bref_main" (i.e., the bref for the first run). 
+
+The bref_main is registered to the anatomy (freesurfer)
+
+Per volume each of these coregistration matrices is concatenated to put it all together in one single transform putting all of the volumes into the same space. In addition the data is sampled to the cortical surface. 
+
 - Input:
-	- "func_sdc" folder (output of [1]), including
-		- "\_bold.nii", "\_sbref.nii"
-- Intermediate files stored:
-	- mcflirt within run coregistration matrix
-	- run specific bref to bref master coregistration matrix
-	- bref to anatomy coregistration matrix
-	- bref to bref examples (used for QC)
+	- bold files (sdc)
+	- Freesurfer folder
 - Output files
-	- "func_coreg"
-	- Volume-Anatomy per run per TR coregistration matrix
+	- Volume->Anatomy per run per TR coregistration matrix
 	- "\_preproc-bold" files (aligned & motion corrected volumes)
 	- "\_space-fsnative" (aligned & projected surface files)
-### [3] s03_confounds
+
+### [3] s03_fmriprep_func.py
+To produce the fMRIprep confounds (acompcor etc) - we take the coregistered functional data, and run fMRIprep on it.  
 - Input:
 	- "func" directory: including "\_preproc-bold" files
-- Intermediate: 
-	- Fake "session" is created under subject directory
+	- Freesurfer folder + fMRIprep anatomy folder
 - Output:
 	- fmriprep file, alongside the confounds we want
-### [4] s04_denoising
-TODO
+
+### [4] s04_confounds.py
+Take the confounds, from fMRIprep & derive the motion related confounds from s02_coreg matrices. Use them to denoise the functional data. 
+
+TODO: test different implementations & versions 
+
+- Input: 
+	- fMRIprep functional files + confounds
+	- coreg file -> including registration matrices & motion corrected bold
+- Output:
+	- Per run confound design matrix
+	- Denoised surface & volume files
 
 ## postproc
 
-TODO
+### [1] s01_gauss_prfpy.py
+Run prf analyses
+- Input:
+	- project_*.yml file specifying settings
+	- project_*_dm.npy file, giving design matrix of prf stimulus
+	- surface data (denoised), *.gii files 
+- Output:
+	- Gaussian prf fits
 
-- prf analyses....
+### [3] s03_cf_anaylsis
+Run connective field analyses
+- Input:
+	- project_*.yml file specifying settings
+	- surface data (denoised), *.gii files 
+	- Freesurfer folder
+- Output:
+	- Connective field fits
 
 
 ### experimental
 
-scripts i'm messing with but haven't felt ready to delete or add to the main pipeline yet...
+Scripts in process but not ready to be part of main pipeline
