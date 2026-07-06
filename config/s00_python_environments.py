@@ -5,7 +5,7 @@ Set up conda/mamba environments for the hypot pipeline.
 Usage:
     python s00_python_setup.py [--env ENV] [--clean-env | --update] [--prefix PATH]
 
-Environments: b14, autoflat, pctx, preproc, prf
+Environments: b14, autoflat, pctx, preproc, prf, bcode_mac
 
 Reads PYPACKAGE_MANAGER, PIPELINE_DIR, FSL_VERSION from the shell environment
 (set by sourcing config/config_pipeline.sh).
@@ -30,7 +30,7 @@ PIPELINE_DIR = Path(os.environ.get("PIPELINE_DIR", Path(__file__).resolve().pare
 ENVS_DIR = Path(__file__).resolve().parent / "envs"
 FSL_VERSION = os.environ.get("FSL_VERSION", "6.0.7.19")
 
-VALID_ENVS = ["b14", "autoflat", "pctx", "preproc", "prf"]
+VALID_ENVS = ["b14", "autoflat", "pctx", "preproc", "prf", "bcode_mac"]
 
 _FSL_PLATFORMS = {
     ("Linux", "x86_64"): "linux-64",
@@ -140,6 +140,28 @@ def _install_prf(prefix: Path | None, clean: bool, update: bool, suffix: str = "
         ])
 
 
+def _install_bcode_mac(prefix: Path | None, clean: bool, update: bool, suffix: str = "") -> None:
+    name = "bcode_mac" + suffix
+    print(f"\n=== {name} (braincoder, tensorflow-metal GPU) ===")
+
+    if platform.system() != "Darwin":
+        print(f"  Skipping '{name}' — requires macOS (tensorflow-macos/tensorflow-metal), got {platform.system()}.")
+        return
+
+    acted = _install_from_yml(name, ENVS_DIR / "bcode_mac.yml", prefix, clean, update)
+    if acted:
+        # --no-build-isolation: pip uses the conda env directly instead of a fresh temp
+        # environment, so it sees conda-installed packages and won't recompile from source.
+        for pkg in [
+            "git+https://github.com/mdaghlian/braincoder_bprf.git@bprf_GP",
+            "git+https://github.com/mdaghlian/dpu_mini.git",
+        ]:
+            _conda_run(name, prefix, ["pip", "install", "--no-build-isolation", pkg])
+        _conda_run(name, prefix, [
+            "pip", "install", "-e", str(PIPELINE_DIR / "cvl_utils"),
+        ])
+
+
 def _install_preproc(prefix: Path | None, clean: bool, update: bool, suffix: str = "") -> None:
     name = "preproc" + suffix
     print(f"\n=== {name} (FSL base + pipeline extras) ===")
@@ -193,6 +215,7 @@ _INSTALLERS = {
     "pctx": _install_pctx,
     "preproc": _install_preproc,
     "prf": _install_prf,
+    "bcode_mac": _install_bcode_mac,
 }
 
 

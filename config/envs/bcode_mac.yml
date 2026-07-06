@@ -1,0 +1,28 @@
+name: bcode_mac
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - contourpy   # pre-built binary; avoids C++17 compile failure on HPCs with old gcc
+  - nibabel=5.3.3
+  - nilearn=0.13.1
+  - statsmodels
+  - PyYaml
+  - pip
+  - pip:
+    # plain "tensorflow" (not tensorflow-macos) ships Apple Silicon wheels directly.
+    # braincoder_bprf's own pyproject.toml depends on unpinned "tensorflow" too, so
+    # installing that same package name here means its later pip install (below)
+    # is satisfied by what's already present instead of pulling in a second,
+    # mismatched tensorflow build that breaks the tensorflow-metal plugin.
+    - tensorflow==2.18.*
+    - tensorflow-metal==1.2.0
+    - tensorflow-probability==0.25.0
+    - tf-keras
+  # braincoder_bprf, dpu_mini, cvl_utils are installed post-create by the setup script
