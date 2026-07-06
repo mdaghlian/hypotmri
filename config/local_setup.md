@@ -145,7 +145,7 @@ Run this once your bash profile is set up (step [0] above) and you've opened a n
 
 ```bash
 cd "${PIPELINE_DIR}/config"
-python s00_python_environments.py   # creates the 5 conda/mamba environments
+python s00_python_environments.py   # creates the conda/mamba environments
 bash s00_containers.sh              # pulls/downloads the containers
 ```
 
@@ -153,7 +153,7 @@ This can take a while the first time (FreeSurfer/FSL packages and containers are
 
 ### What `s00_python_environments.py` creates
 
-Five separate environments, one per pipeline stage, built from the recipes in `config/envs/*.yml`:
+Separate environments, one per pipeline stage, built from the recipes in `config/envs/*.yml`:
 
 | Environment | Used by | Purpose |
 |---|---|---|
@@ -163,6 +163,7 @@ Five separate environments, one per pipeline stage, built from the recipes in `c
 | --- | --- | ---Optional may not include in final package --- |
 | `autoflat` | `anatomical/s04_pycortex.py` | flattens FreeSurfer meshes for pycortex (`autoflatten`) |
 | `pctx` | `anatomical/s04_pycortex.py`, postproc QC | pycortex surface visualisation — needs python 3.10 specifically, as required by pycortex |
+| `bcode_mac` | `postproc/*` (braincoder models) | macOS-only: TensorFlow + tensorflow-metal (Apple Silicon GPU), `tensorflow-probability`, `braincoder_bprf` (`testing-upstream-merge` branch), `dpu_mini`, and `cvl_utils`. Skipped automatically on non-macOS |
 
 `preproc` is built slightly differently from the rest: FSL doesn't publish a static yml, so the script downloads FSL's own conda recipe fresh each time (matched to your OS/CPU automatically) for the base install, then layers `preproc_extras.yml` on top — without pruning, so the FSL packages stay intact.
 
