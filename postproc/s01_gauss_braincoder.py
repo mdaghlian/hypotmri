@@ -261,7 +261,7 @@ def run_pipeline(
     ) / 2
     print(f'Screen radius = {radius_deg:.3f} dva')
 
-    paradigm = np.rollaxis(dm, 2, 0)  # time, y, x
+    paradigm = np.rollaxis(np.flipud(dm), 2, 0)  # time, y, x
     x_grid, y_grid = np.meshgrid(
         np.linspace(-radius_deg, radius_deg, dm.shape[1]),
         np.linspace(-radius_deg, radius_deg, dm.shape[0]),
