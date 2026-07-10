@@ -355,6 +355,8 @@ def run_docker(
 
     env_flags = []
     for k, v in (env_vars or {}).items():
+        if work_dir in v:
+            v = v.replace(work_dir, '/data/', 1)
         env_flags += ['-e', '{}={}'.format(k, v)]
     vol_flags = ['-v', '{}:/data'.format(work_dir)]
     if 'FSLICENSE' in os.environ:
