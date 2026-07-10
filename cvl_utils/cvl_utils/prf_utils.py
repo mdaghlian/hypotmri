@@ -1,7 +1,7 @@
 
-import numpy as np
-import os
+import os,glob,sys,yaml
 opj = os.path.join
+import numpy as np
 import matplotlib.image as mpimg
 from scipy import io, interpolate
 from scipy.ndimage import zoom
@@ -81,6 +81,33 @@ def resample2d(array: np.ndarray, new_size: int, kind: str = 'linear') -> np.nda
         return zoom(array, (zoom_y, zoom_x, 1), order=1)
     else:
         raise ValueError("Input must be 2D or 3D.")
+
+
+def get_dm_and_settings(task,project):
+    postproc_dir = opj(os.environ['PIPELINE_DIR'], 'postproc')
+    
+    settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*.yml'))
+    if not settings_file:
+        settings_file = glob.glob(opj(postproc_dir, f'project_*{project}*.yml'))
+        if not settings_file:
+            raise FileNotFoundError(
+                'No settings files found for {}.  Searched: {}'.format(
+                    project, postproc_dir)
+            )
+    with open(settings_file[0]) as f:
+        prf_settings = yaml.safe_load(f)    
+    
+    dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*{task}*_dm.npy'))
+    if not dm_file:
+        dm_file = glob.glob(opj(postproc_dir, f'project_*{project}*_dm.npy'))
+        if not dm_file:
+            raise FileNotFoundError(
+                'No dm files found for {}.  Searched: {}'.format(
+                    project, postproc_dir)
+            )
+    dm = np.load(dm_file[0])
+    return prf_settings, dm
+
 
 def get_prfdesign(screenshot_path, n_pix=100, dm_edges_clipping=[0,0,0,0]):
     """
