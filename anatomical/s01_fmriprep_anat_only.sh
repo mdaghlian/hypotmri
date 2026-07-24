@@ -114,7 +114,7 @@ elif [[ "$CONTAINER_TYPE" == "apptainer" || "$CONTAINER_TYPE" == "singularity" ]
       -B $FPREP_BIDS_DIR_WF:/work \
       -B $SUBJECTS_DIR:/fsdir \
       -B $PIPELINE_DIR/config/license.txt:/license.txt \
-      $FPREP_SIF \
+      $SIF_DIR/$FPREP_SIF \
         /data /out participant \
         --participant-label $SUBJECT \
         --skip_bids_validation \
