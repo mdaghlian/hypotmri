@@ -31,6 +31,7 @@ Arguments:
     --project       used to find *.yml & dm.npy inside the postproc dir
     --roi-src       fs label to use as source for CF model (default: b14_V1.)
     --roi-target    fs label to use as target for CF model (default: all)
+    --target-morph  number of dilation steps to grow the target roi by (default: 0)
 
 Usage example
 -------------
@@ -43,7 +44,8 @@ s03_cf_prfpy.py \\
     --task pRFLE \\
     --project hypot
     --roi-src b14_V1.label \\
-    --roi-target b14_ALL 
+    --roi-target b14_ALL \\
+    --target-morph 2
 
 """
 
@@ -63,16 +65,17 @@ import pandas as pd
 
 from dpu_mini.fs_tools import dpu_load_roi
 from dpu_mini.mesh_maker import GenMeshMaker
-from dpu_mini.mesh_format import dpu_pairwise_geodesic_distance
+from dpu_mini.mesh_format import dpu_pairwise_geodesic_distance, dpu_morph_roi
 from dpu_mini.stats import dpu_coord_convert
 
 
-from prfpy.stimulus import CFStimulus 
+from prfpy.stimulus import CFStimulus
 from prfpy.model import CFGaussianModel
 from prfpy.fit import CFFitter
 
 from cvl_utils.preproc_func import (
     check_skip,
+    load_benson14_info,
 )
 
 from cvl_utils.prfpy_utils import (
@@ -145,6 +148,7 @@ def run_pipeline(
     project: str,
     roi_src : str,
     roi_target : str,
+    target_morph : int = 0,
     overwrite: dict = None,
     skip: dict = None,
 ) -> dict:
@@ -172,6 +176,7 @@ def run_pipeline(
         sk.update(skip)
     
     prf_settings, dm = get_dm_and_settings(task,project)
+    b14 = load_benson14_info(subject, fs_dir)
     input_dir     = str(Path(
         os.path.join(bids_dir, 'derivatives', input_file)
     ))
@@ -228,10 +233,12 @@ def run_pipeline(
         # ------------------------------------------------------------------
         roi_src_mask = dpu_load_roi(subject, f'{hemi}.{roi_src}', fs_dir)
         roi_target_mask = dpu_load_roi(subject, f'{hemi}.{roi_target}', fs_dir)
-        # remove src vertices from target
-        roi_target_mask[roi_src_mask] = False
         # Create mesh object, useful for performing distance calculations
         gm = GenMeshMaker(subject, fs_dir)
+        if target_morph:
+            roi_target_mask = dpu_morph_roi(gm, roi_target_mask, morph=target_morph)
+        # remove src vertices from target
+        roi_target_mask[roi_src_mask] = False
 
         # ------------------------------------------------------------------
         # Get geodesic distance & appropriate masks
@@ -299,6 +306,12 @@ def run_pipeline(
         else:
             grid_pd = pd.read_csv(grid_csv)
 
+        # --- b14 derived CF parameters (benson values at the CF centre vertex) ---
+        centre_idx = grid_pd['centre'].values.astype(int)
+        for p in ['ecc', 'pol', 'size']:
+            grid_pd[f'b14_{p}'] = b14[p][centre_idx]
+        grid_pd['b14_pol_deg'] = np.degrees(grid_pd['b14_pol'])
+
         print(f'Mean r2 = {grid_pd["rsq"].mean():.3f}')
         hemi_pd.append(grid_pd)
 
@@ -342,8 +355,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Session label (e.g. ses-01)', required=True)
     p.add_argument('--roi-src', default='b14_V1.',
                    help='ROI source region (default benson 14 V1)', required=True)
-    p.add_argument('--roi-target', default='b14_ALL', 
+    p.add_argument('--roi-target', default='b14_ALL',
                    help='ROI of target region: default benson 14 ALL', required=True)
+    p.add_argument('--target-morph', type=int, default=0,
+                   help='Number of dilation steps to grow the target roi by before fitting '
+                        '(0 = no growth; negative values erode instead)')
 
     ow_group = p.add_argument_group(
         'overwrite / skip options',
@@ -404,6 +420,7 @@ def main():
         project         = args.project,
         roi_src         = args.roi_src,
         roi_target      = args.roi_target,
+        target_morph    = args.target_morph,
         overwrite       = overwrite,
         skip            = skip,
     )
