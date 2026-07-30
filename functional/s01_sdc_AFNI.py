@@ -15,6 +15,18 @@ Pipeline per run
     Step 3  - Run unWarpEPIfloat.py                (cwd=work_dir, -s TS, -w /data)
     Step 4  - Apply warp to SBREF                  (3dNwarpApply)
 
+Run selection
+-------------
+Specify which functional runs to process with one of:
+
+  --include-files    FILE [FILE ...]   exact basenames to find under <bids>/sub/ses/func/
+  --include-patterns PAT [PAT ...]     glob patterns relative to <bids>/sub/ses/func/
+  --exclude-patterns PAT [PAT ...]     basename patterns (fnmatch) to exclude
+
+If none are given, all *bold*.nii* in <bids>/sub/ses/func/ are used.
+Task and run labels are extracted from each bold filename automatically
+(via get_labels), so runs across multiple tasks can be processed in one call.
+
 Overwrite behaviour
 -------------------
 Each step checks for its output file in the run work directory.
@@ -37,11 +49,12 @@ python s01_sdc_AFNI.py \\
     --output-dir  /data/derivatives/sdc \\
     --sub         sub-01 \\
     --ses         ses-01 \\
-    --task        rest \\
+    --include-patterns '*task-pRF*bold*.nii.gz' \\
     --afni-docker afni/afni_make_build:latest
 """
 
 import argparse
+import fnmatch
 import glob
 import os
 import re
@@ -51,12 +64,13 @@ from pathlib import Path
 
 from cvl_utils.preproc_func import (
     build_output_name,
+    get_labels,
     make_safe_workdir,
     run_cmd,
     read_pe_direction,
     check_skip,
     get_nvols,
-    _gunzip_to, 
+    _gunzip_to,
     _container_path,
     _stage
 )
@@ -72,6 +86,66 @@ STEP_KEYS = [
 # unWarpEPIfloat.py -s argument: controls output dir name and dataset prefixes.
 # Keep as 'TS' to match the reference bash script behaviour.
 _UNWARP_SID = 'TS'
+
+
+# ---------------------------------------------------------------------------
+# Discovery helpers
+# ---------------------------------------------------------------------------
+
+def _find_bold_files(
+    func_dir: str,
+    subject: str,
+    session: str,
+    include_files: list,
+    include_patterns: list,
+    exclude_patterns: list,
+) -> list:
+    """
+    Return sorted list of BOLD file paths to process.
+
+    Priority:
+      1. include_files     — exact basenames, found recursively under func_dir
+      2. include_patterns  — glob patterns relative to func_dir
+      3. fallback           — all *bold*.nii* in func_dir
+    Exclusions via exclude_patterns are applied as fnmatch against basenames.
+    """
+    if include_files:
+        found = []
+        for fname in include_files:
+            matches = glob.glob(os.path.join(func_dir, '**', fname), recursive=True)
+            if not matches:
+                raise FileNotFoundError(
+                    'include-files: cannot find "{}" under {}'.format(
+                        fname, func_dir))
+            found.extend(matches)
+        bold_files = sorted(set(found))
+
+    elif include_patterns:
+        found = []
+        for pat in include_patterns:
+            found.extend(glob.glob(os.path.join(func_dir, pat)))
+        bold_files = sorted(set(found))
+
+    else:
+        bold_pattern = os.path.join(
+            func_dir, '{}_{}_*bold*.nii*'.format(subject, session))
+        bold_files = sorted(glob.glob(bold_pattern))
+
+    if not bold_files:
+        raise FileNotFoundError(
+            'No BOLD files found. Check --include-files / --include-patterns, '
+            'or that {} exists and contains bold files.'.format(func_dir))
+
+    if exclude_patterns:
+        def _excluded(f):
+            bn = os.path.basename(f)
+            return any(fnmatch.fnmatch(bn, pat) for pat in exclude_patterns)
+        bold_files = [f for f in bold_files if not _excluded(f)]
+        if not bold_files:
+            raise FileNotFoundError(
+                'All BOLD files were excluded by --exclude-patterns.')
+
+    return bold_files
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +334,7 @@ def process_run(
     sbref_path: str | None,
     subject: str,
     session: str,
-    task: str,
+    task_label: str,
     run_label: str,
     subject_output_dir: str,
     afni_docker: str,
@@ -274,8 +348,7 @@ def process_run(
     if overwrite:
         ow.update(overwrite)
 
-    run_suffix_tokens = [t for t in [('task-' + task) if task else None,
-                                     run_label] if t]
+    run_suffix_tokens = [t for t in [task_label, run_label] if t]
     run_suffix = '_'.join(run_suffix_tokens) if run_suffix_tokens else 'run'
 
     work_dir = os.path.join(subject_output_dir, run_suffix)
@@ -479,13 +552,27 @@ def run_pipeline(
     output_file: str,
     subject: str,
     session: str,
-    task: str = '',
     afni_docker: str = os.environ.get('AFNI_IMAGE', 'afni/afni_make_build:latest'),
     overwrite: dict = None,
+    include_files: list = None,
+    include_patterns: list = None,
+    exclude_patterns: list = None,
 ) -> dict:
     """
-    Discover all BOLD runs for *subject* / *session* / *task* and run the
-    full SDC pipeline on each.
+    Discover all BOLD runs for *subject* / *session* (see _find_bold_files
+    for selection rules) and run the full SDC pipeline on each. Task and run
+    labels are extracted per-file via get_labels, so runs spanning multiple
+    tasks can be processed in a single call.
+
+    Parameters
+    ----------
+    include_files : list of str, optional
+        Exact basenames to find recursively under <bids>/subject/session/func/.
+    include_patterns : list of str, optional
+        Glob patterns relative to <bids>/subject/session/func/.
+    exclude_patterns : list of str, optional
+        fnmatch patterns applied to basenames after include selection.
+
     Returns a dict mapping run labels to per-run output dicts.
     """
     ow = {k: False for k in STEP_KEYS}
@@ -512,20 +599,20 @@ def run_pipeline(
     print(' Output    : {}'.format(output_dir))
     print(' Subject   : {}'.format(subject))
     print(' Session   : {}'.format(session))
-    print(' Task      : {}'.format(task))
     print('-' * 55)
 
-    task_glob    = 'task-{}'.format(task) if task else 'task-*'
-    bold_pattern = os.path.join(
-        func_dir, '{}_{}_{}_*_bold.nii*'.format(subject, session, task_glob))
-    bold_files   = sorted(glob.glob(bold_pattern))
-
-    if not bold_files:
-        raise FileNotFoundError(
-            'No BOLD files found for {}_{}_{}.  Searched: {}'.format(
-                subject, session, task_glob, bold_pattern))
+    bold_files = _find_bold_files(
+        func_dir=func_dir,
+        subject=subject,
+        session=session,
+        include_files=include_files,
+        include_patterns=include_patterns,
+        exclude_patterns=exclude_patterns,
+    )
 
     print('\nFound {} BOLD run(s).'.format(len(bold_files)))
+    for idx, bf in enumerate(bold_files, start=1):
+        print('  {}. {}'.format(idx, os.path.basename(bf)))
 
     all_results = {}
 
@@ -535,29 +622,28 @@ def run_pipeline(
             run_idx, len(bold_files), os.path.basename(bold_path)))
         print('=' * 55)
 
-        run_match = re.search(r'run-(\d+)', os.path.basename(bold_path))
-        run_label = 'run-{}'.format(run_match.group(1)) if run_match else ''
+        run_label, task_label = get_labels(bold_path)
 
         if run_label:
             topup_matches = glob.glob(os.path.join(
                 fmap_dir,
                 '{}_{}*_{}*_{}*_epi.nii*'.format(
-                    subject, session, task_glob, run_label)))
+                    subject, session, task_label, run_label)))
             sbref_matches = glob.glob(os.path.join(
                 func_dir,
                 '{}_{}_{}_{}*_sbref.nii*'.format(
-                    subject, session, task_glob, run_label)))
+                    subject, session, task_label, run_label)))
         else:
             topup_matches = [
                 f for f in glob.glob(os.path.join(
                     fmap_dir,
-                    '{}_{}_{}_*_epi.nii*'.format(subject, session, task_glob)))
+                    '{}_{}_{}_*_epi.nii*'.format(subject, session, task_label)))
                 if not re.search(r'run-\d+', os.path.basename(f))
             ]
             sbref_matches = [
                 f for f in glob.glob(os.path.join(
                     func_dir,
-                    '{}_{}_{}_*_sbref.nii*'.format(subject, session, task_glob)))
+                    '{}_{}_{}_*_sbref.nii*'.format(subject, session, task_label)))
                 if not re.search(r'run-\d+', os.path.basename(f))
             ]
 
@@ -581,7 +667,7 @@ def run_pipeline(
             sbref_path=sbref_path,
             subject=subject,
             session=session,
-            task=task,
+            task_label=task_label,
             run_label=run_label,
             subject_output_dir=subject_output_dir,
             afni_docker=afni_docker,
@@ -615,10 +701,39 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument('--output-file', required=True, help='Output derivatives file')
     req.add_argument('--sub',        required=True, help='Subject label (e.g. sub-01)')
     p.add_argument('--ses',          default='ses-01', help='Session label')
-    p.add_argument('--task',         required=True, help='Task label')
     p.add_argument('--afni-docker',
                    default=os.environ.get('AFNI_IMAGE', 'afni/afni_make_build:latest'),
                    help='AFNI Docker image tag, or "local" to run on host')
+
+    sel = p.add_argument_group(
+        'run selection',
+        'Choose which BOLD files to process. '
+        'At most one of --include-files / --include-patterns may be used. '
+        'If neither is given, all *bold*.nii* in <bids>/sub/ses/func/ are used. '
+        'Task and run labels are extracted automatically from each filename.'
+    )
+    sel.add_argument(
+        '--include-files',
+        nargs='+',
+        metavar='FILE',
+        default=None,
+        help='Exact basenames to find recursively under <bids>/sub/ses/func/.',
+    )
+    sel.add_argument(
+        '--include-patterns',
+        nargs='+',
+        metavar='PATTERN',
+        default=None,
+        help='Glob patterns relative to <bids>/sub/ses/func/ '
+             '(e.g. "*task-pRF*bold*.nii.gz").',
+    )
+    sel.add_argument(
+        '--exclude-patterns',
+        nargs='+',
+        metavar='PATTERN',
+        default=None,
+        help='fnmatch patterns applied to basenames to exclude after selection.',
+    )
 
     ow = p.add_argument_group('overwrite options',
                               'Valid step names: ' + ', '.join(STEP_KEYS))
@@ -632,6 +747,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = _build_parser().parse_args()
+
+    if args.include_files and args.include_patterns:
+        raise SystemExit(
+            'error: --include-files and --include-patterns are mutually exclusive.')
+
     if args.overwrite_all:
         overwrite = {k: True for k in STEP_KEYS}
     else:
@@ -644,9 +764,11 @@ def main():
         output_file=args.output_file,
         subject=args.sub,
         session=args.ses,
-        task=args.task,
         afni_docker=args.afni_docker,
         overwrite=overwrite,
+        include_files=args.include_files,
+        include_patterns=args.include_patterns,
+        exclude_patterns=args.exclude_patterns,
     )
 
 
