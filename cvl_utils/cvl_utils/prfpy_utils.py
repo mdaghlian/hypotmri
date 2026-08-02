@@ -175,7 +175,10 @@ def pd_to_np(prf_pd, model):
         prf_np = np.zeros((prf_pd.shape[0], 8))
         pdict = prfpy_params_dict()['gauss']
         for k in pdict.keys():
-            prf_np[:,pdict[k]] = prf_pd[k].to_numpy()
+            try:
+                prf_np[:,pdict[k]] = prf_pd[k].to_numpy()
+            except: 
+                print(f'No {k} in pd')
     return prf_np
 
 class Prf1T1M(object):
