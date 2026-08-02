@@ -38,6 +38,10 @@ Arguments:
     --ses           Session label (e.g. ses-01)
     --task          task label (e.g., pRFLE)
     --project       used to find *.yml & dm.npy inside the postproc dir
+    --n-batches     number of batches to split the iterative fit stage into;
+                    each batch is checkpointed to csv as it completes so an
+                    interrupted run can resume without redoing finished
+                    batches (default: 5)
 
 Usage example
 -------------
@@ -57,6 +61,7 @@ import argparse
 import glob
 import os
 opj = os.path.join
+import shutil
 from pathlib import Path
 
 import nibabel as nib
@@ -174,6 +179,7 @@ def run_pipeline(
     task: str,
     project: str,
     roi : str = 'all',
+    n_batches: int = 5,
     overwrite: dict = None,
     skip: dict = None,
 ) -> dict:
@@ -260,7 +266,7 @@ def run_pipeline(
         distance_cm=prf_settings['screen_distance_cm'],
     ) / 2
     print(f'Screen radius = {radius_deg:.3f} dva')
-
+    blorp
     paradigm = np.rollaxis(np.flipud(dm), 2, 0)  # time, y, x
     x_grid, y_grid = np.meshgrid(
         np.linspace(-radius_deg, radius_deg, dm.shape[1]),
@@ -332,19 +338,49 @@ def run_pipeline(
         'iter_fit',
         force_skip=sk['iter_fit'],
     ):
-        gpars = gfitter.fit(
-            init_pars=grid_init_pars,
-            max_n_iterations=bc_settings.get('max_iterations', 1000),
-            learning_rate=bc_settings.get('learning_rate', 0.1),
-            **bc_settings.get('fitter_args', {}),
-        )
-        iter_rsq = np.asarray(gfitter.r2)
+        # Split the ROI into n_batches chunks and fit them one at a time,
+        # saving each batch's csv as it completes. This lets a crashed /
+        # killed run resume from the last completed batch instead of
+        # redoing the whole (potentially very slow) iterative fit.
+        batch_dir = opj(subject_output_dir, 'iter_batches')
+        os.makedirs(batch_dir, exist_ok=True)
+        n_roi = len(roi_idx)
+        batch_splits = np.array_split(np.arange(n_roi), n_batches)
 
-        iter_pd = pd.DataFrame(_bc_params_to_dict(gpars, iter_rsq, roi_idx))
-        iter_pd['ecc'], iter_pd['pol'] = dpu_coord_convert(
-                iter_pd['mu_x'], iter_pd['mu_y'], 'cart2pol')
+        batch_pds = []
+        for b, batch_pos in enumerate(batch_splits):
+            batch_csv = opj(
+                batch_dir,
+                f'{subject}_{session}_roi-{roi}_task-{task}_model-gauss-bc_'
+                f'stage-iter_batch-{b + 1:02d}of{n_batches:02d}.csv')
+            if os.path.exists(batch_csv) and not ow['iter_fit']:
+                print(f'  [skip] iter_fit batch {b + 1}/{n_batches} — output already exists.')
+                batch_pd = pd.read_csv(batch_csv)
+            else:
+                batch_gfitter = ParameterFitter(
+                    gmodel, psc_data[roi_idx[batch_pos], :].T, gmodel.paradigm,
+                )
+                batch_init_pars = grid_init_pars.iloc[batch_pos].reset_index(drop=True)
+                gpars = batch_gfitter.fit(
+                    init_pars=batch_init_pars,
+                    max_n_iterations=bc_settings.get('max_iterations', 1000),
+                    learning_rate=bc_settings.get('learning_rate', 0.1),
+                    **bc_settings.get('fitter_args', {}),
+                )
+                batch_rsq = np.asarray(batch_gfitter.r2)
+                batch_pd = pd.DataFrame(
+                    _bc_params_to_dict(gpars, batch_rsq, roi_idx[batch_pos]))
+                batch_pd['ecc'], batch_pd['pol'] = dpu_coord_convert(
+                        batch_pd['mu_x'], batch_pd['mu_y'], 'cart2pol')
+                batch_pd.to_csv(batch_csv)
+                print(f'  Saved iter_fit batch {b + 1}/{n_batches} '
+                      f'({len(batch_pos)} vertices) -> {batch_csv}')
+            batch_pds.append(batch_pd)
+
+        iter_pd = pd.concat(batch_pds, ignore_index=True)
         iter_pd.to_csv(iter_csv)
         print(f'Mean r2 = {iter_pd["rsq"].mean():.3f}')
+        shutil.rmtree(batch_dir)
     else:
         iter_pd = pd.read_csv(iter_csv)
 
@@ -402,6 +438,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help='Session label (e.g. ses-01)', required=True)
     p.add_argument('--roi', default='all',
                    help='ROI label (what to filter with fs labels)', required=True)
+    p.add_argument('--n-batches', type=int, default=5,
+                   help='Number of batches to split the iterative fit stage into '
+                        '(each batch is checkpointed to csv as it completes)')
 
     ow_group = p.add_argument_group(
         'overwrite / skip options',
@@ -461,6 +500,7 @@ def main():
         task            = args.task,
         project         = args.project,
         roi             = args.roi,
+        n_batches       = args.n_batches,
         overwrite       = overwrite,
         skip            = skip,
     )
