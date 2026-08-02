@@ -266,7 +266,7 @@ def run_pipeline(
         distance_cm=prf_settings['screen_distance_cm'],
     ) / 2
     print(f'Screen radius = {radius_deg:.3f} dva')
-    blorp
+
     paradigm = np.rollaxis(np.flipud(dm), 2, 0)  # time, y, x
     x_grid, y_grid = np.meshgrid(
         np.linspace(-radius_deg, radius_deg, dm.shape[1]),
