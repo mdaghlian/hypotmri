@@ -114,7 +114,8 @@ echo "-------------------------------------------------------"
 
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_NAME="moco_${SUBJECT}_${SESSION}${TASK}${RUN}"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+JOB_NAME="moco_${SUBJECT}_${SESSION}${TASK}${RUN}_${TIMESTAMP}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
