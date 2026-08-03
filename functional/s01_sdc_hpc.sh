@@ -75,7 +75,7 @@ if [[ "${PC_LOCATION}" == "local" ]] && [[ "$SKIP_SYNC" != true ]]; then
         --bids-dir "$BIDS_DIR" \
         --sub      "$SUBJECT" \
         --ses      "$SESSION" \
-        --raw --deriv freesurfer
+        --raw 
     bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_code.sh"
     echo "Done copying."
 else
@@ -96,7 +96,8 @@ echo "-------------------------------------------------------"
 # --- Build job metadata ---
 TASK_SUFFIX="${TASK:+_task-${TASK}}"
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_NAME="sdc_afni_${SUBJECT}_${SESSION}${TASK_SUFFIX}"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+JOB_NAME="sdc_afni_${SUBJECT}_${SESSION}${TASK_SUFFIX}_${TIMESTAMP}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
