@@ -3,12 +3,13 @@ set -e
 
 # --- Usage Function ---
 usage() {
-    echo "Usage: $0 --bids-dir <path> --sub <sub> --ses <ses>"
+    echo "Usage: $0 --bids-dir <path> --sub <sub> --ses <ses> [--ses <ses> ...]"
     echo ""
     echo "Required Arguments:"
     echo "  --bids-dir      Path to local BIDS directory"
     echo "  --sub           Subject label (e.g., sub-01)"
-    echo "  --ses           Session label (e.g., ses-01)"
+    echo "  --ses           Session label (e.g., ses-01). Repeat --ses to process"
+    echo "                  multiple sessions in a single fMRIPrep run."
     echo "  --input-file    input file, placed in BID_DIR/derivatives"
     echo ""
     echo "Optional Arguments:"
@@ -29,11 +30,12 @@ usage() {
 # --- Parse Arguments ---
 NO_QSUB=false
 SKIP_SYNC=false
+SESSIONS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --bids-dir)         BIDS_DIR="$2"; shift 2 ;;
         --sub)              SUBJECT="$2"; shift 2 ;;
-        --ses)              SESSION="$2"; shift 2 ;;
+        --ses)              SESSIONS+=("$2"); shift 2 ;;
         --input-file)       INPUT_FILE="$2"; shift 2 ;;
         --no-qsub)          NO_QSUB=true; shift ;;
         --skip-sync)        SKIP_SYNC=true; shift ;;
@@ -42,14 +44,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# -> make subject & session robust
+# -> make subject & session(s) robust
 SUBJECT="sub-${SUBJECT#sub-}"
-SESSION="ses-${SESSION#ses-}"
+for i in "${!SESSIONS[@]}"; do
+    SESSIONS[$i]="ses-${SESSIONS[$i]#ses-}"
+done
 
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]] && echo "Error: --bids-dir required" && usage
 [[ -z "$SUBJECT" ]]  && echo "Error: --sub required"      && usage
-[[ -z "$SESSION" ]]  && echo "Error: --ses required"      && usage
+[[ ${#SESSIONS[@]} -eq 0 ]] && echo "Error: --ses required (may be repeated)" && usage
 [[ -z "$INPUT_FILE" ]] && echo "Error: --input-file required" && usage
 # --- Resolve paths depending on where we're running ---
 if [[ "${PC_LOCATION}" == "local" ]]; then
@@ -69,11 +73,13 @@ fi
 if [[ "${PC_LOCATION}" == "local" ]] && [[ "$SKIP_SYNC" != true ]]; then
     echo "Rsyncing input file to cluster..."
     echo " ASSUMING FMRIPREP & FREESURFER outputs are already present on cluster (from previous steps)"
-    bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_to_hpc.sh" \
-        --bids-dir "$BIDS_DIR" \
-        --sub      "$SUBJECT" \
-        --ses      "$SESSION" \
-        --deriv "${INPUT_FILE}"
+    for SES in "${SESSIONS[@]}"; do
+        bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_to_hpc.sh" \
+            --bids-dir "$BIDS_DIR" \
+            --sub      "$SUBJECT" \
+            --ses      "$SES" \
+            --deriv "${INPUT_FILE}"
+    done
     # Also make sure that the scripts are up to date
     bash "${PIPELINE_DIR}/config/hpc_helpers/rsync_code.sh"
     echo "Done copying."
@@ -93,31 +99,40 @@ else
     echo "  Running from:      HPC (direct qsub)"
     echo "  BIDS DIR:          $BIDS_DIR"
 fi
+SESSIONS_STR="${SESSIONS[*]}"
 echo "  Subject:           $SUBJECT"
-echo "  Session:           $SESSION"
+echo "  Sessions:          $SESSIONS_STR"
 echo "  No-qsub mode:      $NO_QSUB"
 echo "-------------------------------------------------------"
 
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_NAME="fprep_func_${SUBJECT}_${SESSION}"
+JOB_TAG=$(IFS=- ; echo "${SESSIONS[*]}")
+JOB_NAME="fprep_func_${SUBJECT}_${JOB_TAG}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
+
+# Build a quoted --ses arg per session so all sessions are staged and
+# processed in a single fMRIPrep run.
+SES_ARGS=""
+for SES in "${SESSIONS[@]}"; do
+    SES_ARGS="${SES_ARGS} '${SES}'"
+done
 
 RUNNER_SCRIPT="~/pipeline/functional/s03_fmriprep_func.py \
     --bids-dir '${SUBMIT_BIDS_DIR}' \
     --sub      '${SUBJECT}' \
-    --ses      '${SESSION}' \
+    --ses      ${SES_ARGS} \
     --input-file '${INPUT_FILE}'"
 echo $RUNNER_SCRIPT
-# Make sure output dir exists 
+# Make sure output dir exists
 [[ ! -d "${BIDS_DIR}/derivatives/fmriprep" ]] && mkdir -p "${BIDS_DIR}/derivatives/fmriprep"
 
 # --- Submit via qsub ---
 echo "-------------------------------------------------------"
 echo "Submitting fmriprep functional job"
 echo "  Subject:  $SUBJECT"
-echo "  Session:  $SESSION"
+echo "  Sessions: $SESSIONS_STR"
 echo "  Logs:     ${REMOTE_HOST:+${REMOTE_HOST}:}${LOG_OUT}"
 echo "-------------------------------------------------------"
 QSUB_CMD="source ~/.bash_profile; \

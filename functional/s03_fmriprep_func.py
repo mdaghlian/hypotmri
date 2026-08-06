@@ -17,8 +17,11 @@ Usage example
 python run_fmriprep_confounds.py \\
     --bids-dir   /data/bids \\
     --sub        sub-01 \\
-    --ses        ses-01 \\
+    --ses        ses-01 ses-02 \\
     --input-file my_preprocessed_deriv
+
+Multiple sessions may be passed to --ses; all are staged before fMRIPrep
+is launched once, so a single fMRIPrep run covers every session given.
 """
 
 import argparse
@@ -164,28 +167,30 @@ def run_pipeline(
     bids_dir: str,
     input_file: str,
     subject: str,
-    session: str,
+    sessions: list[str],
 ) -> None:
     """
-    Full pipeline: stage BOLD files then launch fMRIPrep.
+    Full pipeline: stage BOLD files for every session in *sessions*, then
+    launch fMRIPrep once so it processes all of them in a single run.
     Container configuration is read from environment variables.
     """
     bids_dir = str(Path(bids_dir).resolve())
 
-    input_dir         = os.path.join(bids_dir, 'derivatives', input_file)
-    subject_input_dir = os.path.join(input_dir, subject, session)
+    input_dir = os.path.join(bids_dir, 'derivatives', input_file)
 
-    if not Path(subject_input_dir).is_dir():
-        raise FileNotFoundError(
-            'Input directory not found: {}'.format(subject_input_dir))
+    for session in sessions:
+        subject_input_dir = os.path.join(input_dir, subject, session)
+        if not Path(subject_input_dir).is_dir():
+            raise FileNotFoundError(
+                'Input directory not found: {}'.format(subject_input_dir))
 
     print('-' * 55)
     print('Running fmriprep - to get the confounds')
     print('-' * 55)
-    print(' Input   : {}'.format(input_dir))
-    print(' Output  : {}'.format(bids_dir))
-    print(' Subject : {}'.format(subject))
-    print(' Session : {}'.format(session))
+    print(' Input    : {}'.format(input_dir))
+    print(' Output   : {}'.format(bids_dir))
+    print(' Subject  : {}'.format(subject))
+    print(' Sessions : {}'.format(', '.join(sessions)))
     print('-' * 55)
 
     # ------------------------------------------------------------------
@@ -198,7 +203,7 @@ def run_pipeline(
         data = {
             "Name": "Example dataset",
             "BIDSVersion": "1.0.2"
-        }    
+        }
         with open(fprep_bids_json, 'w') as f:
             json.dump(data, f, indent=4)
 
@@ -208,40 +213,65 @@ def run_pipeline(
     Path(fprep_bids_dir_wf).mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Step 2 — Discover BOLD files
+    # Steps 2-3 — Discover + stage BOLD files, per session
     # ------------------------------------------------------------------
-    pattern = '{}_{}*space-fsT1_*.nii*'.format(subject, session)
-    matches = sorted(Path(input_dir).rglob(pattern))
-    bold_files = [str(p) for p in matches]
+    for session in sessions:
+        subject_input_dir = os.path.join(input_dir, subject, session)
 
-    if not bold_files:
+        pattern = '{}_{}*space-fsT1_*.nii*'.format(subject, session)
+        matches = sorted(Path(input_dir).rglob(pattern))
+        bold_files = [str(p) for p in matches]
+
+        if not bold_files:
+            raise FileNotFoundError(
+                'No BOLD files found for {}_{} in {}'.format(subject, session, input_dir))
+
+        print('\n[{}] Found {} run(s) to process'.format(session, len(bold_files)))
+        print('BOLD files:')
+        for f in bold_files:
+            print('  - {}'.format(os.path.basename(f)))
+
+        fprep_func_dir = os.path.join(fprep_bids_dir, subject, session, 'func')
+        Path(fprep_func_dir).mkdir(parents=True, exist_ok=True)
+
+        print('Copying BOLD files into FPREP_BIDS...')
+        stage_bold_files(bold_files, fprep_func_dir, subject, session)
+
+        # Stage this session's anat if it has one. Not every session is
+        # guaranteed to have an anatomical scan (e.g. a follow-up session
+        # that only reuses the baseline anatomy) - fMRIPrep is fine with
+        # that, it just uses whichever anat(s) are available for the
+        # subject, so we skip sessions with none rather than erroring.
+        fprep_anat_dir = os.path.join(fprep_bids_dir, subject, session, 'anat')
+        if not os.path.exists(fprep_anat_dir):
+            anat_input_dir = os.path.join(bids_dir, subject, session, 'anat')
+            if os.path.isdir(anat_input_dir):
+                shutil.copytree(anat_input_dir, fprep_anat_dir)
+            else:
+                print('  No anat found for {} - will rely on another '
+                      "session's anatomy for this subject.".format(session))
+
+    # ------------------------------------------------------------------
+    # Sanity check — fMRIPrep needs at least one anat staged for the subject.
+    # Check the whole staged subject dir (not just this call's sessions),
+    # since an anat staged during an earlier run for a different session
+    # still counts.
+    # ------------------------------------------------------------------
+    subject_staging_dir = os.path.join(fprep_bids_dir, subject)
+    staged_anat_sessions = sorted(
+        p.parent.name for p in Path(subject_staging_dir).glob('*/anat')
+        if p.is_dir() and any(p.iterdir())
+    )
+    if not staged_anat_sessions:
         raise FileNotFoundError(
-            'No BOLD files found for {}_{} in {}'.format(subject, session, input_dir))
-
-    print('Found {} run(s) to process'.format(len(bold_files)))
-    print('BOLD files:')
-    for f in bold_files:
-        print('  - {}'.format(os.path.basename(f)))
-    
-
+            'No anatomical data found for {} in any of the requested sessions '
+            '({}), and none is already staged in {}. fMRIPrep needs at least '
+            'one T1w for the subject.'.format(
+                subject, ', '.join(sessions), subject_staging_dir))
+    print('\nUsing anatomy from session(s): {}'.format(', '.join(staged_anat_sessions)))
 
     # ------------------------------------------------------------------
-    # Step 3 — Stage BOLD files into FPREP_BIDS
-    # ------------------------------------------------------------------
-    fprep_func_dir = os.path.join(fprep_bids_dir, subject, session, 'func')
-    Path(fprep_func_dir).mkdir(parents=True, exist_ok=True)
-
-    print('\nCopying BOLD files into FPREP_BIDS...')
-    stage_bold_files(bold_files, fprep_func_dir, subject, session)
-
-    # if prep_bids_dir doesn't have an anat folder
-    fprep_anat_dir = os.path.join(fprep_bids_dir, subject, session,'anat')
-    if not os.path.exists(fprep_anat_dir):
-        anat_input_dir = os.path.join(bids_dir,subject,session,'anat')
-        shutil.copytree(anat_input_dir, fprep_anat_dir)
-
-    # ------------------------------------------------------------------
-    # Step 4 — Run fMRIPrep
+    # Step 4 — Run fMRIPrep once, across all staged sessions
     # ------------------------------------------------------------------
     print('\n' + '=' * 42)
     print('Copied it all over - now for fmriprep')
@@ -276,7 +306,9 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument('--input-file',  required=True,
                      help='Name of derivatives folder containing preprocessed BOLD')
     req.add_argument('--sub',         required=True, help='Subject label (e.g. sub-01)')
-    req.add_argument('--ses',         required=True, help='Session label (e.g. ses-01)')
+    req.add_argument('--ses',         required=True, nargs='+',
+                     help='Session label(s) (e.g. ses-01 ses-02). Multiple '
+                          'sessions are staged then processed in a single fMRIPrep run.')
     p.add_argument('--help-env', action='store_true',
                    help='Print expected environment variables and exit')
     return p
@@ -303,13 +335,13 @@ def main() -> None:
         return
 
     subject = 'sub-' + args.sub.removeprefix('sub-')
-    session = 'ses-' + args.ses.removeprefix('ses-')
+    sessions = ['ses-' + s.removeprefix('ses-') for s in args.ses]
 
     run_pipeline(
         bids_dir=args.bids_dir,
         input_file=args.input_file,
         subject=subject,
-        session=session,
+        sessions=sessions,
     )
 
 
