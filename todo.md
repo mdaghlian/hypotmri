@@ -69,6 +69,18 @@ Possible features / wishlists. Need to decide whether they will improve the pipe
 ### SDC - alternatives?
 - add an alternative SDC correction path using FSL `topup` + fieldmaps, rather than relying on the current approach alone?
 
+### coreg - all in one
+At the moment - applyxfm4d, runs serially applying the coregistrations from volume -> bref_i -> bref_main -> T1w (freesurfer). Worth noting the following: 
+
+- this is serial (and slow)
+- Means there are 2 interpolation steps: sdc -> combined moco+coreg. Fmriprep does this in one go - using cubic sinc something. Could be good to incorporate this in? https://github.com/nipreps/fmriprep-resampling-demo/blob/main/resample.ipynb
+
+### Storage size
+At the moment everything is stored and it is massive. Need to think on how to make it lean. Current thoughts:
+
+- symlink for making the FPREP_BIDSDIR (the clean one fed to fmriprep); but may need to change paths for docker to work properly...
+- pruneing fmriprep outputs
+
 ### pRF + Connective fields
 - [ ] Batching options across ROIs
 - [ ] Option to morph ROIs (for all analyses)
