@@ -170,12 +170,47 @@ def _container_path(work_dir: str, filename: str, docker: str) -> str:
     else:
         return os.path.join(work_dir, filename)
 
-def make_safe_workdir(work_dir: str) -> str:
+def make_safe_workdir(work_dir: str = None, *, persistent_dir: str = None, name: str = None) -> str:
     """
-    If work_dir contains spaces, create a symlink under /tmp pointing to it
-    and return the symlink path. Otherwise return work_dir unchanged.
-    The symlink persists for the duration of the pipeline run.
+    Return a filesystem-safe working directory path, optionally creating an
+    ephemeral scratch directory first.
+
+    Two ways to call this:
+    - make_safe_workdir(work_dir): use an existing directory (dirname/
+      basename split into persistent_dir/name internally).
+    - make_safe_workdir(persistent_dir=..., name=...): create and use an
+      ephemeral scratch directory for a pipeline stage explicitly.
+
+    If the resulting work_dir contains spaces, a symlink under /tmp pointing
+    to it is created and returned instead. Otherwise the work_dir path is
+    returned unchanged. The symlink persists for the duration of the
+    pipeline run.
+
+    On HPC (PC_LOCATION=HPC) with $TMPDIR set, the returned work_dir is
+    node-local scratch under $TMPDIR instead of the persistent path, for
+    fast small-file I/O (MCFLIRT .mat outputs, convert_xfm concat, etc.).
+    This applies to plain `make_safe_workdir(work_dir)` calls too: when only
+    work_dir is given, persistent_dir/name are inferred from it (dirname /
+    basename) so existing call sites get the speedup without changes.
     """
+    if persistent_dir is not None or name is not None:
+        if persistent_dir is None or name is None:
+            raise ValueError('Must provide both persistent_dir and name together.')
+    elif work_dir is None:
+        raise ValueError('Must provide either work_dir, or persistent_dir and name.')
+    else:
+        # Single-arg call: derive persistent_dir/name from work_dir so the
+        # HPC scratch-dir logic below applies without touching call sites.
+        trimmed = work_dir.rstrip('/')
+        persistent_dir = os.path.dirname(trimmed)
+        name = os.path.basename(trimmed)
+
+    on_hpc = os.environ.get('PC_LOCATION') == 'HPC'
+    tmp_dir = os.environ.get('TMPDIR')
+    base = os.path.join(tmp_dir, 'preproc_work') if (on_hpc and tmp_dir) else persistent_dir
+    work_dir = os.path.join(base, name)
+    os.makedirs(work_dir, exist_ok=True)
+
     if ' ' not in work_dir:
         return work_dir
     safe = os.path.join(
