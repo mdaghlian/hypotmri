@@ -42,6 +42,9 @@ Overwrite behaviour
 -------------------
 Existence is checked against final BIDS-named files in *output_dir*.
 Skipped steps restore outputs to *work_dir* so downstream steps can proceed.
+Steps can be force-skipped with --skip regardless of whether their outputs
+exist — no file checks, no work_dir restore. The caller is responsible for
+any missing dependencies this creates for downstream steps.
 
 Usage example
 -------------
@@ -236,6 +239,7 @@ def process_run(
     subject_output_dir: str,
     docker_image: str,
     overwrite: dict,
+    skip: dict = None,
 ) -> dict:
     """
     Execute all per-run steps:
@@ -246,6 +250,10 @@ def process_run(
     """
     ow = {k: False for k in STEP_KEYS}
     ow.update(overwrite)
+
+    sk = {k: False for k in STEP_KEYS}
+    if skip:
+        sk.update(skip)
 
     run_label, task_label = get_labels(bold_file)
 
@@ -278,6 +286,7 @@ def process_run(
         ow['sbref_to_main'],
         'Step 2b: sbref_i -> BREF_MAIN',
         workdir_paths={'sbref_to_main': sbref_to_main_work},
+        force_skip=sk['sbref_to_main'],
     ):
         sbref_to_main_final = register_sbref_to_main(
             sbref_file=sbref_file,
@@ -308,6 +317,7 @@ def process_run(
         ow['mcflirt'],
         'Step 3: MCFLIRT',
         workdir_paths={'mcf_mats': mcf_mats_dir_work, 'mcf_par': mcf_par_work},
+        force_skip=sk['mcflirt'],
     ):
         _, mcf_par_work, mcf_mats_dir_work = run_mcflirt(
             bold_file=bold_file,
@@ -340,6 +350,7 @@ def process_run(
         ow['concat_xfm'],
         'Step 4: concat transforms',
         workdir_paths={'combined_mats': combined_mats_dir_work},
+        force_skip=sk['concat_xfm'],
     ):
         concat_transforms(
             mcf_mats_dir=mcf_mats_dir_work,
@@ -368,6 +379,7 @@ def process_run(
         ow['applywarp'],
         'Step 5: applyxfm4D',
         workdir_paths={'bold_fs': bold_fs_out_work},
+        force_skip=sk['applywarp'],
     ):
         apply_xfm4d(
             bold_file=bold_file,
@@ -396,6 +408,7 @@ def process_run(
         {'surf_lh': surf_lh_final, 'surf_rh': surf_rh_final},
         ow['surf_project'],
         'Step 6: surface projection',
+        force_skip=sk['surf_project'],
     ):
         outputs = project_to_surface(
             bold_fs_out=bold_fs_out_work,
@@ -433,6 +446,7 @@ def run_pipeline(
     subjects_dir: str = None,
     docker_image: str = 'local',
     overwrite: dict = None,
+    skip: dict = None,
     include_files: list = None,
     include_patterns: list = None,
     exclude_patterns: list = None,
@@ -468,6 +482,16 @@ def run_pipeline(
                     sorted(unknown), STEP_KEYS)
             )
         ow.update(overwrite)
+
+    sk = {k: False for k in STEP_KEYS}
+    if skip:
+        unknown = set(skip) - set(STEP_KEYS)
+        if unknown:
+            raise ValueError(
+                'Unknown skip key(s): {}.  Valid keys: {}'.format(
+                    sorted(unknown), STEP_KEYS)
+            )
+        sk.update(skip)
 
     input_dir  = str(Path(opj(bids_dir, 'derivatives', input_file)).resolve())
     output_dir = str(Path(opj(bids_dir, 'derivatives', output_file)).resolve())
@@ -524,6 +548,7 @@ def run_pipeline(
         {'bref_main': bref_main_final},
         ow['bref_main'],
         'Step 1: BREF_MAIN',
+        force_skip=sk['bref_main'],
     ):
         bref_main_final = make_bref_main(
             bref_spec=bref_main_spec,
@@ -557,6 +582,7 @@ def run_pipeline(
         },
         ow['bbregister'],
         'Step 2a: bbregister',
+        force_skip=sk['bbregister'],
     ):
         if not Path(fs_t1_nii_final).exists():
             fs_t1_nii_final = convert_fs_t1(
@@ -619,6 +645,7 @@ def run_pipeline(
             subject_output_dir=subject_session_dir,
             docker_image=docker_image,
             overwrite=ow,
+            skip=sk,
         )
 
         run_label, _ = get_labels(bold_file)
@@ -707,7 +734,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     ow_group = p.add_argument_group(
-        'overwrite options',
+        'overwrite / skip options',
         'Valid step names: ' + ', '.join(STEP_KEYS),
     )
     ow_group.add_argument(
@@ -723,6 +750,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action='store_true',
         default=False,
         help='Force re-run for all steps.',
+    )
+    ow_group.add_argument(
+        '--skip',
+        nargs='+',
+        metavar='STEP',
+        default=[],
+        choices=STEP_KEYS,
+        help=(
+            'Hard-skip one or more named steps — no file checks, no work_dir '
+            'restore. Downstream steps continue regardless; caller is '
+            'responsible for any missing dependencies.'
+        ),
     )
 
     return p
@@ -740,6 +779,8 @@ def main():
     else:
         overwrite = {k: (k in args.overwrite) for k in STEP_KEYS}
 
+    skip = {k: (k in args.skip) for k in STEP_KEYS}
+
     args.sub = 'sub-' + args.sub.removeprefix('sub-')
     args.ses = 'ses-' + args.ses.removeprefix('ses-')
 
@@ -752,6 +793,7 @@ def main():
         subjects_dir=args.subjects_dir,
         docker_image=args.docker,
         overwrite=overwrite,
+        skip=skip,
         include_files=args.include_files,
         include_patterns=args.include_patterns,
         exclude_patterns=args.exclude_patterns,
