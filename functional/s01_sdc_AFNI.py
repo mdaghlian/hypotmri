@@ -14,6 +14,8 @@ Pipeline per run
     Step 2  - Convert reverse-PE EPI to AFNI       (3dcopy)
     Step 3  - Run unWarpEPIfloat.py                (cwd=work_dir, -s TS, -w /data)
     Step 4  - Apply warp to SBREF                  (3dNwarpApply)
+    Step 5  - Clean up intermediate files
+    Step 6  - Generate QC plot                     (orig vs SDC-corrected SBREF)
 
 Run selection
 -------------
@@ -41,6 +43,7 @@ Valid step names:
     unwarp            Step 3
     apply_warp_sbref  Step 4
     sdc_clean         Step 5
+    qc_plot           Step 6
 
 Usage example
 -------------
@@ -74,6 +77,7 @@ from cvl_utils.preproc_func import (
     _container_path,
     _stage
 )
+from cvl_utils.qc_plots import sdc_ortho_qc_plot
 
 STEP_KEYS = [
     'convert_bold',
@@ -81,6 +85,7 @@ STEP_KEYS = [
     'unwarp',
     'apply_warp_sbref',
     'sdc_clean',
+    'qc_plot',
 ]
 
 # unWarpEPIfloat.py -s argument: controls output dir name and dataset prefixes.
@@ -291,6 +296,24 @@ def apply_warp_to_sbref(
     return sdc_sbref
 
 
+def generate_qc_plot(
+    orig_sbref: str,
+    sdc_sbref: str,
+    out_html: str,
+    title: str = None,
+) -> str:
+    """
+    Build an interactive orig-vs-SDC-corrected SBREF QC report
+    (`cvl_utils.qc_plots.sdc_ortho_qc_plot`) and write it to *out_html*.
+
+    Returns *out_html*.
+    """
+    fig, post_script = sdc_ortho_qc_plot(orig_sbref, sdc_sbref, title=title)
+    os.makedirs(os.path.dirname(out_html) or '.', exist_ok=True)
+    fig.write_html(out_html, div_id='sdc_ortho_qc_plot', post_script=post_script)
+    return out_html
+
+
 def _find_forward_warp(work_dir: str) -> str:
     """
     Locate the forward warp produced by unWarpEPIfloat.py.
@@ -368,6 +391,9 @@ def process_run(
     sdc_sbref   = _out('{}_sdc_sbref'.format(run_suffix))
     final_bold  = os.path.join(subject_output_dir, os.path.basename(unwarp_out))
     final_sbref = os.path.join(subject_output_dir, os.path.basename(sdc_sbref))
+    final_qc_html = build_output_name(
+        subject_output_dir, subject, session,
+        '{}_sdc_qc'.format(run_suffix), extension='.html')
 
     # If the final outputs already exist (in work_dir or already promoted),
     # the AFNI +orig conversions (Steps 1-2) may have been removed by
@@ -537,9 +563,28 @@ def process_run(
             print('    -> kept: {}'.format(
                 ', '.join(os.path.basename(p) for p in keep_paths if p)))
 
+    # ------------------------------------------------------------------
+    # Step 6 — Generate QC plot (orig vs SDC-corrected SBREF)
+    # ------------------------------------------------------------------
+    print('\n  [Step 6] Generating QC plot...')
+
+    if sbref_path is None:
+        print('    [skip] Step 6: QC plot — no SBREF available for this run.')
+    else:
+        if not check_skip({'qc_html': final_qc_html}, ow['qc_plot'],
+                          'Step 6: QC plot'):
+            generate_qc_plot(
+                orig_sbref=sbref_path,
+                sdc_sbref=final_sbref,
+                out_html=final_qc_html,
+                title='{} {} {} — SDC QC'.format(subject, session, run_suffix),
+            )
+        print('    -> {}'.format(final_qc_html))
+
     return {
         'sdc_bold':  final_bold,
         'sdc_sbref': final_sbref if sbref_path is not None else None,
+        'qc_html':   final_qc_html if sbref_path is not None else None,
     }
 
 
