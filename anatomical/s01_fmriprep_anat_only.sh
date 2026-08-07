@@ -21,13 +21,16 @@ usage() {
 # --- SCRTIPT OVERVIEW ---
 # [1] Create FPREPBIDS -> inside BIDS_DIR/derivatives
 # -- Why? We don't want to run fmriprep on the actual "raw" data
-# -- but rather on a subset of the data we have preprocessed. To 
+# -- but rather on a subset of the data we have preprocessed. To
 # -- do this we put only what we want inside "FPREPBIDS"
 # -- The fMRIPREP+Freesurfer outputs are placed in the usual place
 # -- (BIDS_DIR/derivatives)
-# [2] Copy the anatomical (T1w) from BIDS_DIR/SUBJECTS/SESSION/anat
+# [2] Symlink the anatomical (T1w) from BIDS_DIR/SUBJECT/SESSION/anat -
+# -- rather than copying it, so it doesn't exist twice on disk. The
+# -- container is bind-mounted with access to BIDS_DIR itself (at the
+# -- same absolute path) so these symlinks resolve inside it too.
 # [3] Run fmriprep
-# --- --- --- --- 
+# --- --- --- ---
 SUFFIX=""
 # --- Parse Arguments ---
 while [[ $# -gt 0 ]]; do
@@ -44,6 +47,30 @@ done
 # -> make subject & session robust
 SUBJECT="sub-${SUBJECT#sub-}"
 SESSION="ses-${SESSION#ses-}"
+
+# -> resolve BIDS_DIR to an absolute path. This matters for the symlink
+# strategy below: symlink targets are written as absolute paths, and the
+# container is later bind-mounted with BIDS_DIR at that *same* absolute
+# path, so the two have to agree on what "absolute" means here.
+BIDS_DIR="$(cd "$BIDS_DIR" && pwd)"
+
+# Symlink every file under $1 into $2, mirroring subdirectories as real
+# directories rather than symlinking the directory itself. This matters
+# because pybids-based tools (fMRIPrep uses pybids internally) don't
+# reliably descend into symlinked *directories* during BIDS discovery -
+# symlinking only the files, inside real directories, avoids anat scans
+# silently going undiscovered.
+symlink_tree() {
+    local src_dir="$1"
+    local dst_dir="$2"
+    local file rel dst_file
+    while IFS= read -r -d '' file; do
+        rel="${file#"$src_dir"/}"
+        dst_file="${dst_dir}/${rel}"
+        mkdir -p "$(dirname "$dst_file")"
+        ln -s "$(cd "$(dirname "$file")" && pwd)/$(basename "$file")" "$dst_file"
+    done < <(find "$src_dir" -type f -print0)
+}
 
 # --- Status Summary ---
 echo "-------------------------------------------------------"
@@ -82,9 +109,9 @@ if [[ -e "${FPREP_SES}" ]]; then
 fi
 mkdir -p "${FPREP_SES}"
 
-echo "Copying anatomy" 
+echo "Symlinking anatomy (avoids duplicating the T1w on disk)"
 ANAT_SRC="${BIDS_DIR}/${SUBJECT}/${SESSION}/anat"
-cp -r ${ANAT_SRC} ${FPREP_SES}/
+symlink_tree "${ANAT_SRC}" "${FPREP_SES}/anat"
 echo "running fprep in ${FPREP_BIDS_DIR} and ${FPREP_SIF}"
 FPREP_OUT="${BIDS_DIR}/derivatives/fmriprep${SUFFIX}"
 [[ ! -d "${FPREP_OUT}" ]] && mkdir -p "${FPREP_OUT}"
@@ -92,6 +119,7 @@ FPREP_OUT="${BIDS_DIR}/derivatives/fmriprep${SUFFIX}"
 if [[ "$CONTAINER_TYPE" == "docker" ]]; then
     docker run --rm \
       -v $FPREP_BIDS_DIR:/data:ro \
+      -v $BIDS_DIR:$BIDS_DIR:ro \
       -v $FPREP_OUT:/out \
       -v $FPREP_BIDS_DIR_WF:/work \
       -v $SUBJECTS_DIR:/fsdir \
@@ -110,6 +138,7 @@ elif [[ "$CONTAINER_TYPE" == "apptainer" || "$CONTAINER_TYPE" == "singularity" ]
     ${CONTAINER_TYPE} run \
       --cleanenv \
       -B $FPREP_BIDS_DIR:/data \
+      -B $BIDS_DIR:$BIDS_DIR:ro \
       -B $FPREP_OUT:/out \
       -B $FPREP_BIDS_DIR_WF:/work \
       -B $SUBJECTS_DIR:/fsdir \
