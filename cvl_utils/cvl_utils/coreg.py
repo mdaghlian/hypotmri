@@ -347,11 +347,21 @@ def run_mcflirt(
 def concat_transforms(
     mcf_mats_dir: str,
     sbref_i_to_main_mat: str,
-    sbref2fs_fslmat: str,
     combined_mats_dir: str,
     work_dir: str,
     docker_image: str,
+    sbref2fs_fslmat: str = None,
 ) -> None:
+    """
+    Concatenate per-volume MCFLIRT matrices with sbref_i -> BREF_MAIN, and
+    optionally on to FS T1.
+
+    sbref2fs_fslmat:
+        None (default) — single-stage concat, VOL -> sbref_i -> BREF_MAIN.
+                          combined_mats_dir ends in BREF_MAIN space.
+        path           — original two-stage concat,
+                          VOL -> sbref_i -> BREF_MAIN -> FS_T1.
+    """
     os.makedirs(combined_mats_dir, exist_ok=True)
     mat_files = sorted(glob.glob(opj(mcf_mats_dir, 'MAT_*')))
     if not mat_files:
@@ -360,21 +370,32 @@ def concat_transforms(
     for mat in mat_files:
         _stage(mat, work_dir)
     _stage(sbref_i_to_main_mat, work_dir)
-    _stage(sbref2fs_fslmat, work_dir)
 
     mats_c     = _container_path(work_dir, os.path.basename(mcf_mats_dir),          docker_image)
     combined_c = _container_path(work_dir, os.path.basename(combined_mats_dir),     docker_image)
     m1_c       = _container_path(work_dir, os.path.basename(sbref_i_to_main_mat), docker_image)
-    m2_c       = _container_path(work_dir, os.path.basename(sbref2fs_fslmat),       docker_image)
 
-    shell_script = (
-        f'for mat in {mats_c}/MAT_*; do '
-        f'  bn=$(basename "$mat"); '
-        f'  convert_xfm -omat {combined_c}/tmp_$bn -concat {m1_c} $mat && '
-        f'  convert_xfm -omat {combined_c}/$bn     -concat {m2_c} {combined_c}/tmp_$bn && '
-        f'  rm {combined_c}/tmp_$bn; '
-        f'done'
-    )
+    if sbref2fs_fslmat is None:
+        # Single-stage: VOL -> sbref_i -> BREF_MAIN only.
+        shell_script = (
+            f'for mat in {mats_c}/MAT_*; do '
+            f'  bn=$(basename "$mat"); '
+            f'  convert_xfm -omat {combined_c}/$bn -concat {m1_c} $mat; '
+            f'done'
+        )
+    else:
+        # Two-stage: VOL -> sbref_i -> BREF_MAIN -> FS_T1.
+        _stage(sbref2fs_fslmat, work_dir)
+        m2_c = _container_path(work_dir, os.path.basename(sbref2fs_fslmat), docker_image)
+
+        shell_script = (
+            f'for mat in {mats_c}/MAT_*; do '
+            f'  bn=$(basename "$mat"); '
+            f'  convert_xfm -omat {combined_c}/tmp_$bn -concat {m1_c} $mat && '
+            f'  convert_xfm -omat {combined_c}/$bn     -concat {m2_c} {combined_c}/tmp_$bn && '
+            f'  rm {combined_c}/tmp_$bn; '
+            f'done'
+        )
 
     run_cmd(
         work_dir=work_dir,
