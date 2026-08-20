@@ -370,6 +370,16 @@ def run_docker(
     instead.  In that case every argument starting with ``/data`` is rewritten
     to use *work_dir* as the root, so callers need not change anything.
 
+    Always runs via `--entrypoint /bin/bash -c 'exec "$@"' _ <cmd...>`
+    rather than relying on the image's own default ENTRYPOINT. This makes
+    behaviour uniform across images regardless of what each one bakes in as
+    its default entrypoint (a plain passthrough, as in the FSL/FreeSurfer
+    image; a BIDS-app command, as in fmriprep's image, which would
+    otherwise swallow *cmd* as arguments to itself) — `exec "$@"` just
+    hands off to *cmd* directly either way, with no extra process left
+    behind. `_` is a placeholder for bash's $0; "$@" then expands to *cmd*'s
+    actual argv (command + args).
+
     Streams stdout/stderr in real time.  Raises RuntimeError on non-zero exit.
 
     Parameters
@@ -397,10 +407,11 @@ def run_docker(
     if 'FSLICENSE' in os.environ:
         env_flags += ['-e', "FS_LICENSE=/opt/freesurfer/license.txt"]
         vol_flags += ['-v', '{}:/opt/freesurfer/license.txt'.format(os.environ['FSLICENSE'])]
-    full_cmd = ['docker', 'run', '--rm',
+
+    full_cmd = ['docker', 'run', '--rm', '--entrypoint', '/bin/bash',
          *env_flags,
          *vol_flags,
-         docker_image] + cmd
+         docker_image, '-c', 'exec "$@"', '_'] + cmd
     print('Running command:\n  {}'.format(' '.join(full_cmd)))
     proc = subprocess.Popen(
         full_cmd,
