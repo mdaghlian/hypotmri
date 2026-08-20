@@ -1,0 +1,6 @@
+#!/bin/bash
+apptainer run \
+    --env BIDS_DIR=/data,SUBJECTS_DIR=/data/derivatives/freesurfer,FS_LICENSE=/opt/freesurfer/license.txt \
+    --bind $BIDS_DIR:/data \
+    --bind $FSLICENSE:/opt/freesurfer/license.txt \
+    --containall $SIF_DIR/$1
