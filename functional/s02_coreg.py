@@ -233,6 +233,7 @@ def process_run(
     docker_image: str,
     overwrite: dict,
     skip: dict = None,
+    fs_cache_dir: str = None,
 ) -> dict:
     """
     Execute all per-run steps:
@@ -410,6 +411,7 @@ def process_run(
             bold_base=base,
             work_dir=safe_work_dir,
             docker_image=docker_image,
+            fs_cache_dir=fs_cache_dir,
         )
         shutil.copy(outputs['lh'], surf_lh_final)
         shutil.copy(outputs['rh'], surf_rh_final)
@@ -502,6 +504,8 @@ def run_pipeline(
     main_work_dir = opj(subject_main_dir, '_session_work')
     os.makedirs(main_work_dir, exist_ok=True)
     safe_main_work = make_safe_workdir(main_work_dir)
+    # FreeSurfer subject is copied here once; per-run work dirs hard-link it
+    fs_cache_dir = opj(safe_main_work, 'subjects')
 
     print('-' * 55)
     print('Processing: Motion Correction + Registration')
@@ -639,6 +643,7 @@ def run_pipeline(
             docker_image=docker_image,
             overwrite=ow,
             skip=sk,
+            fs_cache_dir=fs_cache_dir,
         )
 
         run_label, _ = get_labels(bold_file)
@@ -651,9 +656,10 @@ def run_pipeline(
     print('Output directory: {}'.format(subject_main_dir))
     print('=' * 55)
 
-    subj_fs_dst = opj(main_work_dir, 'subjects')
-    if Path(subj_fs_dst).exists():
-        shutil.rmtree(subj_fs_dst)
+    # Remove the staged FreeSurfer subject. It lives in safe_main_work, which
+    # on HPC is node-local scratch rather than main_work_dir.
+    if Path(fs_cache_dir).exists():
+        shutil.rmtree(fs_cache_dir)
 
     return all_results
 

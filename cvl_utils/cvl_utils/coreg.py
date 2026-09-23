@@ -29,6 +29,62 @@ from cvl_utils.preproc_func import (
 )
 
 # ---------------------------------------------------------------------------
+# FreeSurfer subject staging
+# ---------------------------------------------------------------------------
+
+def _link_or_copy(src: str, dst: str) -> None:
+    """Hard-link *src* to *dst*; fall back to a real copy across filesystems."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def stage_fs_subject(
+    subjects_dir: str,
+    subject: str,
+    dst_subjects_dir: str,
+    cache_subjects_dir: str = None,
+) -> str:
+    """
+    Make <dst_subjects_dir>/<subject> available to FreeSurfer tools running in
+    a container that can only see the work dir.
+
+    The subject is copied from *subjects_dir* once, into *cache_subjects_dir*
+    (a real copy, so nothing done in a work dir can modify the original
+    FreeSurfer data). Every further stage is a tree of hard links to that
+    cache, so no data is copied per run (falls back to a real copy if the
+    cache and destination are on different filesystems).
+
+    If *cache_subjects_dir* is None the destination itself is the cache.
+    Returns the host path <dst_subjects_dir>/<subject>.
+    """
+    dst = opj(dst_subjects_dir, subject)
+    if Path(dst).exists():
+        return dst
+
+    cache_subjects_dir = cache_subjects_dir or dst_subjects_dir
+    cache = opj(cache_subjects_dir, subject)
+    if not Path(cache).exists():
+        src = opj(subjects_dir, subject)
+        if not Path(src).exists():
+            raise FileNotFoundError(
+                'FreeSurfer subject not found: {}'.format(src))
+        # Copy to a temporary name first so an interrupted copy is never
+        # mistaken for a complete one on the next run.
+        partial = cache + '.partial'
+        if Path(partial).exists():
+            shutil.rmtree(partial)
+        shutil.copytree(src, partial)
+        os.rename(partial, cache)
+
+    if cache != dst:
+        os.makedirs(dst_subjects_dir, exist_ok=True)
+        shutil.copytree(cache, dst, copy_function=_link_or_copy)
+    return dst
+
+
+# ---------------------------------------------------------------------------
 # Step functions
 # ---------------------------------------------------------------------------
 
@@ -189,10 +245,9 @@ def run_bbregister(
         ],
     )
 
-    # Stage FreeSurfer subject tree
-    subj_fs_dst = opj(work_dir, 'subjects', subject)
-    if not Path(subj_fs_dst).exists():
-        shutil.copytree(opj(subjects_dir, subject), subj_fs_dst)
+    # Stage FreeSurfer subject tree (work_dir/subjects doubles as the cache
+    # that per-run surface projection hard-links from)
+    stage_fs_subject(subjects_dir, subject, opj(work_dir, 'subjects'))
 
     init_dat_c     = _container_path(work_dir, 'sbref_initial_reg.dat', docker_image)
     subjects_dir_c = _container_path(work_dir, 'subjects',              docker_image)
@@ -460,15 +515,19 @@ def project_to_surface(
     bold_base: str,
     work_dir: str,
     docker_image: str,
+    fs_cache_dir: str = None,
 ) -> dict:
     """
     Project *bold_fs_out* to lh and rh cortical surfaces via mri_vol2surf.
 
+    fs_cache_dir: optional subjects dir holding an already-staged copy of the
+    FreeSurfer subject (see stage_fs_subject); the per-run copy is then made
+    of hard links to it instead of a fresh copy of the whole subject.
+
     Returns a dict mapping hemisphere ('lh', 'rh') -> output GIFTI path.
     """
-    subj_fs_dst = opj(work_dir, 'subjects', subject)
-    if not Path(subj_fs_dst).exists():
-        shutil.copytree(opj(subjects_dir, subject), subj_fs_dst)
+    stage_fs_subject(subjects_dir, subject, opj(work_dir, 'subjects'),
+                     cache_subjects_dir=fs_cache_dir)
 
     bold_staged    = _stage(bold_fs_out, work_dir)
     bold_c         = _container_path(work_dir, os.path.basename(bold_staged), docker_image)
