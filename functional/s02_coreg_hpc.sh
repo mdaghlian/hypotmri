@@ -56,18 +56,6 @@ done
 SUBJECT="sub-${SUBJECT#sub-}"
 SESSION="ses-${SESSION#ses-}"
 
-# --- Extract --task --run from EXTRA_ARGS ---
-# not strictly needed here, but helpful nice for job naming 
-TASK="" 
-RUN=""
-for ((i=0; i<${#EXTRA_ARGS[@]}; i++)); do
-    if [[ "${EXTRA_ARGS[$i]}" == "--task" ]]; then
-        TASK="task-${EXTRA_ARGS[$((i+1))]}"
-    elif [[ "${EXTRA_ARGS[$i]}" == "--run" ]]; then
-        RUN="run-${EXTRA_ARGS[$((i+1))]}"
-    fi
-done
-
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]]    && echo "Error: --bids-dir required"    && usage
 [[ -z "$INPUT_FILE" ]]   && echo "Error: --input-file required"   && usage
@@ -125,11 +113,16 @@ echo "-------------------------------------------------------"
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-JOB_NAME="moco_${SUBJECT}_${SESSION}${TASK}${RUN}_${TIMESTAMP}"
+JOB_NAME="moco_${SUBJECT}_${SESSION}_${TIMESTAMP}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
-# Build optional --task flag (omit entirely if TASK is empty)
+# Shell-quote each forwarded arg so globs/spaces (e.g. --include-patterns
+# 'ses-01/*bold*') survive the one round of shell parsing done by ssh/eval.
+EXTRA_ARGS_Q=""
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+    EXTRA_ARGS_Q=$(printf '%q ' "${EXTRA_ARGS[@]}")
+fi
 
 RUNNER_SCRIPT="~/pipeline/functional/s02_coreg.py \
     --bids-dir    '${SUBMIT_BIDS_DIR}' \
@@ -138,12 +131,11 @@ RUNNER_SCRIPT="~/pipeline/functional/s02_coreg.py \
     --sub         '${SUBJECT}' \
     --ses         '${SESSION}' \
     --docker      '${FSL_FREESURFER_SIF}' \
-    ${EXTRA_ARGS[*]}"   
+    ${EXTRA_ARGS_Q}"   
 echo "-------------------------------------------------------"
 echo "Submitting COREGISTRATION job"
 echo "  Subject:  $SUBJECT"
 echo "  Session:  $SESSION"
-echo "  Task:     ${TASK:-<all>}"
 echo "  Logs:     ${REMOTE_HOST:+${REMOTE_HOST}:}${LOG_OUT}"
 echo "-------------------------------------------------------"
 QSUB_CMD="source ~/.bash_profile; \
