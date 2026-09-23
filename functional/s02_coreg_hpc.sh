@@ -14,6 +14,9 @@ usage() {
     echo ""
     echo "Optional Arguments:"
     echo "  --skip-sync     Skip rsync step (assumes data is already on cluster)"
+    echo "  --mem           RAM *per core* (Myriad semantics; default 64G)"
+    echo "  --cores         Cores to request (default 1; the tools used are single-threaded)"
+    echo "  --tmpfs         Node-local \$TMPDIR scratch to request (default 100G)"
     echo "  --help          Display this help message"
     echo "Any arguments after '--' are forwarded directly to s02_coreg.py"
     exit 1
@@ -28,6 +31,9 @@ usage() {
 
 # --- Parse Arguments ---
 SKIP_SYNC=false
+MEM_PER_CORE="64G"
+N_CORES=1
+TMPFS="100G"
 EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,6 +43,9 @@ while [[ $# -gt 0 ]]; do
         --sub)              SUBJECT="$2";    shift 2 ;;
         --ses)              SESSION="$2";    shift 2 ;;
         --skip-sync)        SKIP_SYNC=true; shift ;;
+        --mem)              MEM_PER_CORE="$2"; shift 2 ;;
+        --cores)            N_CORES="$2"; shift 2 ;;
+        --tmpfs)            TMPFS="$2"; shift 2 ;;
         --help)             usage ;;
         --)  shift; EXTRA_ARGS+=("$@"); break ;;
         *)   EXTRA_ARGS+=("$1"); shift ;;
@@ -109,6 +118,7 @@ else
 fi
 echo "  Subject:              $SUBJECT"
 echo "  Session:              $SESSION"
+echo "  Resources:            ${N_CORES} core(s) x ${MEM_PER_CORE} RAM, ${TMPFS} tmpfs"
 echo "  Forwarded args:       ${EXTRA_ARGS[*]:-<none>}"
 echo "-------------------------------------------------------"
 
@@ -145,8 +155,9 @@ QSUB_CMD="source ~/.bash_profile; \
         -o  '${LOG_OUT}' \
         -e  '${LOG_ERR}' \
         -l  h_rt=8:00:00 \
-        -l  mem=8G \
-        -pe smp 8 \
+        -l  mem=${MEM_PER_CORE} \
+        -l  tmpfs=${TMPFS} \
+        -pe smp ${N_CORES} \
         -j  n \
         ${RUNNER_SCRIPT}"
 
