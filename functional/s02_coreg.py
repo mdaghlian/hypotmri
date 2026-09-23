@@ -74,8 +74,6 @@ from cvl_utils.preproc_func import (
     extract_volume,
     get_labels,
     make_safe_workdir,
-    _strip_extensions,
-    _bold_base
 )
 from cvl_utils.coreg import (
     make_bref_main,
@@ -142,8 +140,6 @@ def _find_bold_files(
 
     elif include_patterns:
         found = []
-        print(include_patterns)
-        print(os.listdir(subject_input_dir))
         for pat in include_patterns:
             found.extend(glob.glob(opj(subject_input_dir, pat)))
         bold_files = sorted(set(found))
