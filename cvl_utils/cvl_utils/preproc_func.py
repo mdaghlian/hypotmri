@@ -111,10 +111,28 @@ def _strip_extensions(p: Path) -> Path:
         p = p.with_suffix('')
     return p
 
+def _is_staged_copy(src: str, dst: str) -> bool:
+    """
+    True if *dst* is an up-to-date copy of file *src*: same size and same
+    mtime (to within 1 s, for filesystems with coarse timestamps). _stage
+    copies with shutil.copy2, which preserves mtime, so a file staged earlier
+    from the same source matches; a regenerated source does not.
+    """
+    try:
+        s, d = os.stat(src), os.stat(dst)
+    except FileNotFoundError:
+        return False
+    return s.st_size == d.st_size and abs(s.st_mtime - d.st_mtime) < 1.0
+
+
 def _stage(src: str, work_dir: str) -> str:
     """
     Copy *src* into *work_dir* if it is not already there.
     Returns the host path of the copy (work_dir / basename(src)).
+
+    Files: the copy is skipped when work_dir already holds an up-to-date copy
+    (see _is_staged_copy), so staging the same large BOLD run in several steps
+    only copies it once. Directories are always refreshed.
     """
     dst = os.path.join(work_dir, os.path.basename(src))
     if str(Path(src).resolve()) != str(Path(dst).resolve()):
@@ -122,8 +140,8 @@ def _stage(src: str, work_dir: str) -> str:
             if Path(dst).exists():
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
-        else:
-            shutil.copy(src, dst)
+        elif not _is_staged_copy(src, dst):
+            shutil.copy2(src, dst)
     return dst
 
 def extract_volume(in_file: str, out_file: str, idx: int = 0) -> str:
