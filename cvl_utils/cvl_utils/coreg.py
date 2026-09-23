@@ -375,6 +375,12 @@ def run_mcflirt(
     sbref_i_c     = _container_path(work_dir, os.path.basename(sbref_i),   docker_image)
     mcf_prefix_c  = _container_path(work_dir, 'bold_mcf',                  docker_image)
 
+    # MCFLIRT does not clear an existing .mat dir; stale MAT_* files from an
+    # earlier (longer) run would otherwise be picked up by concat_transforms.
+    stale_mats = opj(work_dir, 'bold_mcf.mat')
+    if Path(stale_mats).exists():
+        shutil.rmtree(stale_mats)
+
     run_cmd(
         work_dir=work_dir,
         docker_image=docker_image,
@@ -411,7 +417,9 @@ def concat_transforms(
         path           — original two-stage concat,
                           VOL -> sbref_i -> BREF_MAIN -> FS_T1.
     """
-    os.makedirs(combined_mats_dir, exist_ok=True)
+    if Path(combined_mats_dir).exists():
+        shutil.rmtree(combined_mats_dir)  # never mix with stale matrices
+    os.makedirs(combined_mats_dir)
     mat_files = sorted(glob.glob(opj(mcf_mats_dir, 'MAT_*')))
     if not mat_files:
         raise FileNotFoundError('No MAT_* files found in {}'.format(mcf_mats_dir))

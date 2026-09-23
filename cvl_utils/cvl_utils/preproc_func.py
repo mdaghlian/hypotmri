@@ -252,7 +252,16 @@ def make_safe_workdir(work_dir: str = None, *, persistent_dir: str = None, name:
 
     on_hpc = os.environ.get('PC_LOCATION') == 'HPC'
     tmp_dir = os.environ.get('TMPDIR')
-    base = os.path.join(tmp_dir, 'preproc_work') if (on_hpc and tmp_dir) else persistent_dir
+    if on_hpc and tmp_dir:
+        # Scratch dirs all sit flat under $TMPDIR/preproc_work, so tag the
+        # name with a hash of the persistent location. Otherwise e.g.
+        # <out>/sub/ses-01/task-X_run-01 and <out>/sub/ses-02/task-X_run-01
+        # would share one scratch dir and see each other's files.
+        tag = hashlib.md5(os.path.abspath(persistent_dir).encode()).hexdigest()[:8]
+        base = os.path.join(tmp_dir, 'preproc_work')
+        name = '{}_{}'.format(name, tag)
+    else:
+        base = persistent_dir
     work_dir = os.path.join(base, name)
     os.makedirs(work_dir, exist_ok=True)
 

@@ -220,6 +220,20 @@ def _find_sbref_for_bold(
 # Per-run pipeline
 # ---------------------------------------------------------------------------
 
+def _cleanup_workdir(work_dir: str, safe_work_dir: str) -> None:
+    """
+    Remove a run's work dir, wherever make_safe_workdir actually put it:
+    the persistent *work_dir*, node-local scratch on HPC, and/or the /tmp
+    symlink used when the path contains spaces.
+    """
+    real = os.path.realpath(safe_work_dir)
+    if os.path.islink(safe_work_dir):
+        os.unlink(safe_work_dir)
+    for d in {real, work_dir}:
+        if Path(d).exists():
+            shutil.rmtree(d)
+
+
 def process_run(
     bold_file: str,
     sbref_file: str,
@@ -416,7 +430,7 @@ def process_run(
         shutil.copy(outputs['lh'], surf_lh_final)
         shutil.copy(outputs['rh'], surf_rh_final)
 
-    shutil.rmtree(work_dir)
+    _cleanup_workdir(work_dir, safe_work_dir)
     return {
         'sbref_to_main_mat': sbref_to_main_final,
         'mcf_motion_params':   mcf_par_final,
