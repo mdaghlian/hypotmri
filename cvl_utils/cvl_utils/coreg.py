@@ -558,6 +558,7 @@ def project_to_surface(
                 '--mov',          bold_c,
                 '--hemi',         hemi,
                 '--projfrac-avg', '0.2', '0.8', '0.1',
+                '--interp',       'trilinear',
                 '--o',            surf_c,
                 '--trgsubject',   subject,
                 '--cortex',
