@@ -313,6 +313,7 @@ def run_mcflirt(
     sbref_i: str,
     work_dir: str,
     docker_image: str,
+    custom_args = [],
 ) -> tuple:
     """
     Run MCFLIRT on *bold_file*, referencing *sbref_i* (the run-matched sbref).
@@ -336,7 +337,7 @@ def run_mcflirt(
             '-out',     mcf_prefix_c,
             '-mats',
             '-plots',
-            '-report',
+            '-report', *custom_args,
         ],
     )
 
