@@ -68,12 +68,10 @@ import re
 import shutil
 from pathlib import Path
 
-import nibabel as nib
-import numpy as np
-
 from cvl_utils.preproc_func import (
     build_output_name,
     check_skip,
+    extract_volume,
     get_labels,
     make_safe_workdir,
     _strip_extensions,
@@ -211,12 +209,7 @@ def _find_sbref_for_bold(
 
     if not Path(synthetic_path).exists():
         print('  No SBREF found — extracting vol 0 as synthetic sbref...')
-        img  = nib.load(bold_file)
-        data = img.get_fdata(dtype=np.float32)
-        vol  = data[..., 0] if data.ndim == 4 else data
-        out  = nib.Nifti1Image(vol, img.affine, img.header)
-        out.set_data_dtype(np.float32)
-        nib.save(out, synthetic_path)
+        extract_volume(bold_file, synthetic_path, idx=0)
     else:
         print('  No SBREF found — reusing existing synthetic sbref.')
 

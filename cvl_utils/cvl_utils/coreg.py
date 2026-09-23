@@ -18,11 +18,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import nibabel as nib
-import numpy as np
-
 from cvl_utils.preproc_func import (
     build_output_name,
+    extract_volume,
     run_cmd,
     run_local,
     fsl_val,
@@ -73,12 +71,7 @@ def make_bref_main(
             if not bolds:
                 raise FileNotFoundError(
                     'No sbref or bold files found under {}'.format(search_dir))
-            img  = nib.load(bolds[0])
-            data = img.get_fdata(dtype=np.float32)
-            vol  = data[..., 0] if data.ndim == 4 else data
-            out  = nib.Nifti1Image(vol, img.affine, img.header)
-            out.set_data_dtype(np.float32)
-            nib.save(out, out_path)
+            extract_volume(bolds[0], out_path, idx=0)
             note = 'AUTO-DETECT (vol-0 of {}): no sbref found'.format(bolds[0])
             src  = None  # already written to out_path
 

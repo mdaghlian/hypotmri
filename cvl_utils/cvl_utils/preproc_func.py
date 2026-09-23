@@ -126,6 +126,33 @@ def _stage(src: str, work_dir: str) -> str:
             shutil.copy(src, dst)
     return dst
 
+def extract_volume(in_file: str, out_file: str, idx: int = 0) -> str:
+    """
+    Write volume *idx* of a (3D or 4D) NIfTI to *out_file*.
+
+    Only the requested volume is read (via the array proxy), so memory use is
+    one volume regardless of run length. The on-disk datatype of *in_file* is
+    kept, unless the file carries a non-trivial scl_slope/scl_inter, in which
+    case the scaled values are written as float32.
+
+    Returns *out_file*.
+    """
+    img = nib.load(in_file)
+    if len(img.shape) == 4:
+        vol = np.asanyarray(img.dataobj[..., idx])
+    else:
+        vol = np.asanyarray(img.dataobj)
+
+    slope, inter = img.header.get_slope_inter()
+    scaled = (slope not in (None, 1.0)) or (inter not in (None, 0.0))
+    out_dtype = np.float32 if scaled else img.get_data_dtype()
+
+    out = img.__class__(vol, img.affine, img.header.copy())
+    out.set_data_dtype(out_dtype)
+    nib.save(out, out_file)
+    return out_file
+
+
 def _gunzip_to(src: str, dst: str) -> None:
     """Decompress *src* (.nii.gz) to *dst* (.nii)."""
     with open(dst, 'wb') as fh:
