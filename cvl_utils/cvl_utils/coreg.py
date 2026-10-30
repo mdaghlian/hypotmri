@@ -18,12 +18,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import nibabel as nib
+
 from cvl_utils.preproc_func import (
     build_output_name,
     extract_volume,
     run_cmd,
-    run_local,
-    fsl_val,
     _stage,
     _container_path,
 )
@@ -479,10 +479,13 @@ def apply_xfm4d(
     bold_c  = _container_path(work_dir, os.path.basename(bold_file),  docker_image)
     fs_t1_c = _container_path(work_dir, os.path.basename(fs_t1_nii),  docker_image)
 
-    # Extract first volume to read voxel size
-    res_ref = opj(work_dir, 'res_ref.nii.gz')
-    run_local(['fslroi', bold_file, res_ref, '0', '1'])
-    vox = fsl_val(res_ref, 'pixdim1')
+    # Voxel size from the header. Not via host fslval: on Myriad its FSLDIR is wrong, so fslval printed nothing
+    # (exit 0), flirt got an empty -applyisoxfm and silently fell back to 1 mm (8x the voxels; 2026-10-30)
+    vox = float(nib.load(bold_file).header.get_zooms()[0])
+    if not vox > 0:
+        raise ValueError('BOLD voxel size {} from {} is not positive'.format(vox, bold_file))
+    vox = '{:g}'.format(vox)
+    print('  Resampling onto the FS-T1 grid at the BOLD voxel size: {} mm'.format(vox))
 
     # Resample FS T1 to BOLD voxel size (still in FS space)
     res_ref_hd_c = _container_path(work_dir, 'res_ref_correct_header.nii.gz', docker_image)
