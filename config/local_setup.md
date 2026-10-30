@@ -175,6 +175,18 @@ Separate environments, one per pipeline stage, built from the recipes in `config
 
 On Singularity/Apptainer, all three `.sif` files are downloaded pre-built from Dropbox rather than built locally, to avoid a slow local Docker build. If you ever need to build one from scratch yourself, see `s00_containers_make_with_docker.sh`.
 
+## Git setup (only if you will commit)
+
+Run once per clone, from the repo root:
+
+```bash
+pipx install nbstripout && nbstripout --install   # strip notebook outputs on commit
+git config core.hooksPath .githooks               # enable the pre-commit checks
+```
+
+- **nbstripout** (wired up by `.gitattributes`): notebooks are committed without outputs. Your local copies keep theirs.
+- **`.githooks/pre-commit`**: blocks newly added files over 500 KB, and blocks committing notebooks if nbstripout isn't set up. It never modifies your files. Use `git commit --no-verify` to bypass it once.
+
 ## Reinstalling / updating environments and containers
 
 Re-running `s00_python_environments.py` with no flags is always safe — **existing environments are left untouched and skipped**. Use the flags below when you actually want to change something:

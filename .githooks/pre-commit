@@ -1,0 +1,35 @@
+#!/bin/sh
+# Pre-commit checks. Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# 1. Notebooks staged but the nbstripout filter isn't set up -> block
+#    (without the filter, outputs would be committed).
+# 2. Newly added file larger than MAX_KB -> block. Size is measured on the
+#    staged blob, i.e. after nbstripout has stripped notebook outputs.
+#
+# Never modifies the working tree. Bypass for a one-off: git commit --no-verify
+
+MAX_KB=500
+fail=0
+
+nb_staged=$(git -c core.quotepath=off diff --cached --name-only --diff-filter=ACM -- '*.ipynb')
+if [ -n "$nb_staged" ] && [ -z "$(git config --get filter.nbstripout.clean)" ]; then
+    echo "pre-commit: notebooks staged, but the nbstripout filter is not set up in this clone." >&2
+    echo "  Run:  pipx install nbstripout && nbstripout --install" >&2
+    echo "  then: git add --renormalize -- '*.ipynb'   (re-stage them stripped)" >&2
+    fail=1
+fi
+
+too_big=$(git -c core.quotepath=off diff --cached --name-only --diff-filter=A |
+    while IFS= read -r f; do
+        kb=$(( $(git cat-file -s ":$f") / 1024 ))
+        [ "$kb" -gt "$MAX_KB" ] && echo "  ${kb} KB  $f"
+    done)
+if [ -n "$too_big" ]; then
+    echo "pre-commit: newly added files over ${MAX_KB} KB:" >&2
+    echo "$too_big" >&2
+    echo "  Unstage with: git restore --staged <file>  (or add to .gitignore)" >&2
+    fail=1
+fi
+
+exit $fail
