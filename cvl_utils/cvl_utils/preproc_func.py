@@ -543,6 +543,7 @@ def run_cmd(
     env_vars: dict = None,
     verbose: bool = True,
     cwd=None,
+    **kwargs
 ) -> None:
     if docker_image is None or docker_image == 'local':
         if work_dir is not None:
@@ -552,18 +553,45 @@ def run_cmd(
                 for arg in cmd
             ]
         env = {**os.environ, **(env_vars or {})} if env_vars else None
-        run_local(cmd, verbose=verbose, env=env, cwd=cwd)
+        run_local(cmd, verbose=verbose, env=env, cwd=cwd, **kwargs)
     elif docker_image.endswith('.sif'):                          # ← new branch
         if work_dir is None:
             raise ValueError('work_dir is required when running via Singularity/Apptainer')
         run_singularity(work_dir, docker_image, cmd,
-                        env_vars=env_vars, verbose=verbose, cwd=cwd)
+                        env_vars=env_vars, verbose=verbose, cwd=cwd, **kwargs)
     else:
         if work_dir is None:
             raise ValueError('work_dir is required when running via Docker')
         run_docker(work_dir, docker_image, cmd,
-                   env_vars=env_vars, verbose=verbose, cwd=cwd)
+                   env_vars=env_vars, verbose=verbose, cwd=cwd, **kwargs)
 
+
+class CmdRunner:
+    """
+    Helper class to run commands in a container or locally, with optional
+    environment variables and working directory.
+    """
+    def __init__(self, work_dir: str = None, docker_image: str = None,
+                 env_vars: dict = None, verbose: bool = True):
+        self.work_dir = work_dir
+        self.docker_image = docker_image
+        self.env_vars = env_vars or {}
+        self.verbose = verbose
+
+    def run(self, cmd, cwd=None, **kwargs) -> None:
+        # if isinstance(cmd, str):
+        #     cmd = [cmd]
+        # cmd = [c.split() if isinstance(c, str) else c for c in cmd]
+
+        run_cmd(
+            cmd,
+            work_dir=self.work_dir,
+            docker_image=self.docker_image,
+            env_vars=self.env_vars,
+            verbose=self.verbose,
+            cwd=cwd,
+            **kwargs
+        )
 
 def check_skip(
     outdir_paths: dict,
@@ -628,3 +656,63 @@ def _to_afni_prefix(work_dir: str, name: str) -> str:
     """
     return '/data/{}'.format(name)
 
+def cast_nii(path_in: Path, path_out: Path, dtype, dry_run: bool = False) -> dict:
+    """
+    Cast a NIfTI to integer *dtype* (e.g. np.int16 / np.uint16), rounding and
+    clipping to the dtype's range; NaN/inf become 0.
+
+    Works one volume at a time in float32, so peak memory is the integer
+    output array plus a single float volume (previously the whole run in
+    float64 plus full-size boolean masks). float32 represents every integer
+    up to 2**24 exactly, so nothing is lost for 16-bit targets.
+
+    Returns counts of NaN/inf, below-min and above-max voxels.
+    """
+    img = nib.load(str(path_in))
+    orig_dtype = np.dtype(img.get_data_dtype())
+    dtype = np.dtype(dtype)
+
+    stats = {
+        'file': str(path_in),
+        'orig_dtype': str(orig_dtype),
+        'skipped': False,
+        'n_nan_inf': 0,
+        'n_below_min': 0,
+        'n_above_max': 0,
+    }
+
+    if orig_dtype == dtype:
+        stats['skipped'] = True
+        return stats
+
+    info = np.iinfo(dtype)
+    shape = img.shape
+    # Iterate over the last axis for 4D+ data, otherwise do the one volume
+    if len(shape) >= 4:
+        slicers = [(Ellipsis, i) for i in range(shape[-1])]
+    else:
+        slicers = [(Ellipsis,)]
+    out = None if dry_run else np.empty(shape, dtype=dtype)
+
+    for sl in slicers:
+        vol = np.array(img.dataobj[sl], dtype=np.float32)  # writable copy
+
+        bad = ~np.isfinite(vol)
+        n_bad = int(bad.sum())
+        if n_bad:
+            stats['n_nan_inf'] += n_bad
+            vol[bad] = 0
+        stats['n_below_min'] += int((vol < info.min).sum())
+        stats['n_above_max'] += int((vol > info.max).sum())
+
+        if out is not None:
+            np.clip(vol, info.min, info.max, out=vol)
+            out[sl] = np.rint(vol)
+
+    if not dry_run:
+        new_img = img.__class__(out, img.affine, img.header.copy())
+        new_img.set_data_dtype(dtype)
+        path_out.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(new_img, str(path_out))
+
+    return stats
