@@ -6,7 +6,9 @@ usage() {
     echo ""
     echo "Required Arguments:"
     echo "  --sub              Subject label (e.g., sub-01)"
-    echo "  --ses              Session label (e.g., ses-01)"
+    echo ""
+    echo "Optional:"
+    echo "  --ses              Session label (e.g., ses-01). If omitted, all sessions are synced"
     echo ""
     echo "One of:"
     echo "  --raw              Sync rawdata for subject/session"
@@ -49,9 +51,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# -> make subject & session robust
+[[ -z "$SUBJECT" ]]   && echo "Error: --sub required"                                                && usage
+
+# -> make subject & session robust (empty session = all sessions)
 SUBJECT="sub-${SUBJECT#sub-}"
-SESSION="ses-${SESSION#ses-}"
+[[ -n "$SESSION" ]] && SESSION="ses-${SESSION#ses-}"
 
 # --- Resolve BIDS dirs (arg > env) ---
 BIDS_DIR="${ARG_BIDS_DIR:-$BIDS_DIR}"
@@ -60,8 +64,6 @@ REMOTE="${ARG_REMOTE:-$REMOTE_BIDS_DIR}"
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]]  && echo "Error: --bids_dir not set and \$BIDS_DIR not in environment"          && usage
 [[ -z "$REMOTE" ]]    && echo "Error: --remote not set and \$REMOTE_BIDS_DIR not in environment"     && usage
-[[ -z "$SUBJECT" ]]   && echo "Error: --sub required"                                                && usage
-[[ -z "$SESSION" ]]   && echo "Error: --ses required"                                                && usage
 [[ $RAW -eq 0 && $RAW_ANAT -eq 0 && -z "$DERIV" ]] \
     && echo "Error: at least one of --raw, --raw-anat, or --deriv must be specified" && usage
 
@@ -135,7 +137,7 @@ echo "-------------------------------------------------------"
 echo "  Local:           $BIDS_DIR"
 echo "  Remote:          $REMOTE"
 echo "  Subject:         $SUBJECT"
-echo "  Session:         $SESSION"
+echo "  Session:         ${SESSION:-all}"
 echo "  Raw:             $([ $RAW -eq 1 ] && echo yes || echo no)"
 echo "  Raw anat:        $([ $RAW_ANAT -eq 1 ] && echo yes || echo no)"
 echo "  Deriv:           ${DERIV:-none}"
@@ -160,20 +162,35 @@ rsync -avz $DRY_RUN $EXCLUDE_OPT \
     "${BIDS_DIR}/" \
     "${REMOTE}/"
 
-# [2] Raw data (full session)
+# Relative path below the subject dir ("" = whole subject, i.e. all sessions)
+SES_REL="${SESSION:+/${SESSION}}"
+
+# [2] Raw data (full session, or all sessions)
 if [[ $RAW -eq 1 ]]; then
-    echo "Syncing raw data (full session)..."
+    echo "Syncing raw data (${SESSION:-all sessions})..."
     do_rsync \
-        "${BIDS_DIR}/${SUBJECT}/${SESSION}" \
-        "${REMOTE}/${SUBJECT}/${SESSION}"
+        "${BIDS_DIR}/${SUBJECT}${SES_REL}" \
+        "${REMOTE}/${SUBJECT}${SES_REL}"
 fi
 
 # [3] Raw anat only
 if [[ $RAW_ANAT -eq 1 ]]; then
     echo "Syncing raw anat only..."
-    do_rsync \
-        "${BIDS_DIR}/${SUBJECT}/${SESSION}/anat" \
-        "${REMOTE}/${SUBJECT}/${SESSION}/anat"
+    if [[ -n "$SESSION" ]]; then
+        ANAT_RELS=("${SUBJECT}/${SESSION}/anat")
+    else
+        # every ses-*/anat, or sub-XX/anat if the dataset has no session level
+        ANAT_RELS=()
+        for d in "${BIDS_DIR}/${SUBJECT}"/ses-*/anat "${BIDS_DIR}/${SUBJECT}/anat"; do
+            [[ -d "$d" ]] && ANAT_RELS+=("${d#${BIDS_DIR}/}")
+        done
+        [[ ${#ANAT_RELS[@]} -eq 0 ]] && echo "  ⚠️  No anat folders found for ${SUBJECT}"
+    fi
+    for rel in "${ANAT_RELS[@]}"; do
+        do_rsync \
+            "${BIDS_DIR}/${rel}" \
+            "${REMOTE}/${rel}"
+    done
 fi
 
 # [4] Derivatives
@@ -181,19 +198,39 @@ if [[ -n "$DERIV" ]]; then
     if [[ "$DERIV" == "freesurfer" ]]; then
         echo "Syncing FreeSurfer derivative..."
         # FreeSurfer uses sub-##_ses-## instead of nested folders
-        FS_LABEL="${SUBJECT}_${SESSION}"
-        FS_LOCAL="${BIDS_DIR}/derivatives/freesurfer/${FS_LABEL}"
-        FS_REMOTE="${REMOTE}/derivatives/freesurfer/${FS_LABEL}"
+        FS_DIR="${BIDS_DIR}/derivatives/freesurfer"
+        if [[ -n "$SESSION" ]]; then
+            FS_LABELS=("${SUBJECT}_${SESSION}")
+        else
+            FS_LABELS=()
+            for d in "${FS_DIR}/${SUBJECT}"_ses-*; do
+                [[ -d "$d" && ! -L "$d" ]] && FS_LABELS+=("$(basename "$d")")
+            done
+            [[ ${#FS_LABELS[@]} -eq 0 ]] && echo "Error: no ${SUBJECT}_ses-* dirs in ${FS_DIR}" && exit 1
+        fi
 
-        do_rsync \
-            "${FS_LOCAL}" \
-            "${FS_REMOTE}"
+        for FS_LABEL in "${FS_LABELS[@]}"; do
+            do_rsync \
+                "${FS_DIR}/${FS_LABEL}" \
+                "${REMOTE}/derivatives/freesurfer/${FS_LABEL}"
+        done
 
         # --- Create remote symlink sub-XX → sub-XX_ses-YY ---
+        # Target: --ses if given; else mirror the local sub-XX symlink; else the only session
         REMOTE_HOST="${REMOTE%%:*}"
         REMOTE_PATH="${REMOTE#*:}"
+        FS_LABEL=""
+        if [[ -n "$SESSION" ]]; then
+            FS_LABEL="${SUBJECT}_${SESSION}"
+        elif [[ -L "${FS_DIR}/${SUBJECT}" ]]; then
+            FS_LABEL="$(basename "$(readlink "${FS_DIR}/${SUBJECT}")")"
+        elif [[ ${#FS_LABELS[@]} -eq 1 ]]; then
+            FS_LABEL="${FS_LABELS[0]}"
+        fi
 
-        if [[ -z "$DRY_RUN" ]]; then
+        if [[ -z "$FS_LABEL" ]]; then
+            echo "  ⚠️  Multiple FreeSurfer sessions and no local ${SUBJECT} symlink — skipping remote symlink"
+        elif [[ -z "$DRY_RUN" ]]; then
             echo "Ensuring remote freesurfer symlink exists..."
             ssh "$REMOTE_HOST" "cd '${REMOTE_PATH}/derivatives/freesurfer' && \
                 if [[ -L '${SUBJECT}' ]]; then
@@ -209,10 +246,10 @@ if [[ -n "$DERIV" ]]; then
         fi
     else
         # Standard derivative
-        echo "Syncing derivative: ${DERIV}..."
+        echo "Syncing derivative: ${DERIV} (${SESSION:-all sessions})..."
         do_rsync \
-            "${BIDS_DIR}/derivatives/${DERIV}/${SUBJECT}/${SESSION}" \
-            "${REMOTE}/derivatives/${DERIV}/${SUBJECT}/${SESSION}"
+            "${BIDS_DIR}/derivatives/${DERIV}/${SUBJECT}${SES_REL}" \
+            "${REMOTE}/derivatives/${DERIV}/${SUBJECT}${SES_REL}"
     fi
 fi
 
