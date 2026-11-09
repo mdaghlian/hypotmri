@@ -8,13 +8,24 @@ Run fMRIPrep on preprocessed BOLD data to extract confounds.
 
 Pipeline overview
 -----------------
-    Step 1  - Copy preprocessed BOLD files into FPREP_BIDS with standardised naming
+    Step 1  - Symlink preprocessed BOLD files (+ anat) into FPREP_BIDS with
+              standardised naming, rather than copying them, to avoid
+              duplicating data on disk
     Step 2  - Write per-run JSON sidecar (RepetitionTime, TaskName)
     Step 3  - Run fMRIPrep via Docker or Apptainer/Singularity
 
+Storage note
+------------
+FPREP_BIDS only ever contains symlinks back into *bids_dir* (plus the tiny
+JSON sidecars, which are real files) - never physical copies of the BOLD or
+anat data. For those symlinks to resolve *inside* the fMRIPrep container
+too, run_fmriprep() bind-mounts bids_dir into the container at the same
+absolute path it has on the host, in addition to the usual /data, /out,
+/work, /fsdir mounts. See run_fmriprep() for details.
+
 Usage example
 -------------
-python run_fmriprep_confounds.py \\
+python s03_fmriprep_func.py \\
     --bids-dir   /data/bids \\
     --sub        sub-01 \\
     --ses        ses-01 ses-02 \\
@@ -22,6 +33,8 @@ python run_fmriprep_confounds.py \\
 
 Multiple sessions may be passed to --ses; all are staged before fMRIPrep
 is launched once, so a single fMRIPrep run covers every session given.
+Omit --ses entirely to auto-discover and process every session available
+for that subject under the input derivatives directory.
 """
 
 import argparse
@@ -53,6 +66,51 @@ from cvl_utils.preproc_func import (
 
 
 # ---------------------------------------------------------------------------
+# Symlink helpers
+# ---------------------------------------------------------------------------
+
+def _symlink(src: str, dst: str) -> None:
+    """
+    Create *dst* as a symlink to the absolute, resolved path of *src*,
+    replacing anything already at *dst* (a stale symlink, or - if this
+    session was staged by an older copy-based version of this script - a
+    real file/directory).
+
+    Using an absolute target means the link is valid regardless of the
+    working directory, and - given the source tree is bind-mounted into
+    the fMRIPrep container at that same absolute path, see run_fmriprep()
+    - resolves correctly inside the container too.
+    """
+    src_abs = str(Path(src).resolve())
+    if os.path.lexists(dst):
+        if os.path.isdir(dst) and not os.path.islink(dst):
+            shutil.rmtree(dst)
+        else:
+            os.remove(dst)
+    os.symlink(src_abs, dst)
+
+
+def _symlink_tree(src_dir: str, dst_dir: str) -> None:
+    """
+    Recreate the directory structure of *src_dir* under *dst_dir*, with
+    every *file* symlinked individually rather than the directory itself
+    being a single symlink.
+
+    This matters because tools that walk a BIDS tree (pybids, which
+    fMRIPrep uses internally) don't necessarily descend into symlinked
+    *directories* by default - symlinking only the files, inside real
+    directories, avoids anat/func scans silently going undiscovered.
+    """
+    src_dir = str(Path(src_dir).resolve())
+    for root, _dirs, files in os.walk(src_dir):
+        rel = os.path.relpath(root, src_dir)
+        dst_root = dst_dir if rel == '.' else os.path.join(dst_dir, rel)
+        os.makedirs(dst_root, exist_ok=True)
+        for fname in files:
+            _symlink(os.path.join(root, fname), os.path.join(dst_root, fname))
+
+
+# ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
 
@@ -63,15 +121,16 @@ def stage_bold_files(
     session: str,
 ) -> list[dict]:
     """
-    Copy each BOLD run into *fprep_func_dir* with a clean BIDS name and
-    write the accompanying JSON sidecar.  Returns a list of metadata dicts.
+    Symlink each BOLD run into *fprep_func_dir* with a clean BIDS name and
+    write the accompanying JSON sidecar (a real file - it doesn't exist
+    anywhere else to link to).  Returns a list of metadata dicts.
     """
     staged = []
     for bold_file in bold_files:
         basename = os.path.basename(bold_file)
         print('  Processing: {}'.format(basename))
 
-        
+
         run_label, task_label = get_labels(bold_file)
         stem      = f'{subject}_{session}_{task_label}_{run_label}_bold'
         dest_nii  = os.path.join(fprep_func_dir, stem + '.nii.gz')
@@ -86,7 +145,7 @@ def stage_bold_files(
         with open(dest_json, 'w') as fh:
             json.dump(sidecar, fh, indent=2)
 
-        shutil.copy(bold_file, dest_nii)
+        _symlink(bold_file, dest_nii)
 
         staged.append({
             'source':    bold_file,
@@ -118,6 +177,18 @@ def run_fmriprep(
 
     license_file = os.path.join(pipeline_dir, 'config', 'license.txt')
 
+    # fprep_bids_dir (mounted as /data below) only contains symlinks back
+    # into bids_dir - the BOLD/anat files themselves live under bids_dir
+    # (e.g. derivatives/<input_file>/... and <sub>/<ses>/anat/...), which
+    # is otherwise never mounted into the container. Without this, every
+    # symlink would dangle inside the container even though it resolves
+    # fine on the host. Mounting bids_dir at the *same absolute path* on
+    # both sides means the symlinks' absolute targets resolve identically
+    # in both places - no path translation needed. Read-only, since
+    # nothing should be writing back through this mount (fMRIPrep writes
+    # only go to /out and /work).
+    bids_dir = str(Path(bids_dir).resolve())
+
     # Shared fMRIPrep arguments (everything after the positional args)
     fmriprep_args = [
         '/data', '/out', 'participant',
@@ -127,7 +198,9 @@ def run_fmriprep(
         '--fs-license-file', '/license.txt',
         '--work-dir', '/work',
         '--omp-nthreads', '4',
-        '--nprocs', '4',
+        '--nprocs', '4', 
+        # '--low-mem',
+        # '--mem-mb', '14000',
         '--ignore', 'fieldmaps', 'slicetiming',
         '--output-spaces', 'func',
     ]
@@ -136,6 +209,7 @@ def run_fmriprep(
         cmd = [
             'docker', 'run', '--rm',
             '-v', '{}:/data:ro'.format(fprep_bids_dir),
+            '-v', '{}:{}:ro'.format(bids_dir, bids_dir),
             '-v', '{}:/out'.format(fmriprep_out),
             '-v', '{}:/work'.format(fprep_bids_dir_wf),
             '-v', '{}:/fsdir'.format(subjects_dir),
@@ -149,6 +223,7 @@ def run_fmriprep(
             container_type, 'run',
             '--cleanenv',
             '-B', '{}:/data'.format(fprep_bids_dir),
+            '-B', '{}:{}:ro'.format(bids_dir, bids_dir),
             '-B', '{}:/out'.format(fmriprep_out),
             '-B', '{}:/work'.format(fprep_bids_dir_wf),
             '-B', '{}:/fsdir'.format(subjects_dir),
@@ -167,16 +242,36 @@ def run_pipeline(
     bids_dir: str,
     input_file: str,
     subject: str,
-    sessions: list[str],
+    sessions: list[str] | None = None,
 ) -> None:
     """
     Full pipeline: stage BOLD files for every session in *sessions*, then
     launch fMRIPrep once so it processes all of them in a single run.
     Container configuration is read from environment variables.
+
+    sessions : list of session labels, or None/empty to auto-discover and
+        process every session available for *subject* under
+        bids_dir/derivatives/input_file/subject/.
     """
     bids_dir = str(Path(bids_dir).resolve())
 
     input_dir = os.path.join(bids_dir, 'derivatives', input_file)
+
+    if not sessions:
+        subject_input_root = os.path.join(input_dir, subject)
+        if not Path(subject_input_root).is_dir():
+            raise FileNotFoundError(
+                'Subject input directory not found: {}'.format(subject_input_root))
+        sessions = sorted(
+            p.name for p in Path(subject_input_root).iterdir()
+            if p.is_dir() and p.name.startswith('ses-')
+        )
+        if not sessions:
+            raise FileNotFoundError(
+                'No --ses given, and no session directories found under {}'.format(
+                    subject_input_root))
+        print('No --ses given - auto-discovered session(s) for {}: {}'.format(
+            subject, ', '.join(sessions)))
 
     for session in sessions:
         subject_input_dir = os.path.join(input_dir, subject, session)
@@ -234,7 +329,7 @@ def run_pipeline(
         fprep_func_dir = os.path.join(fprep_bids_dir, subject, session, 'func')
         Path(fprep_func_dir).mkdir(parents=True, exist_ok=True)
 
-        print('Copying BOLD files into FPREP_BIDS...')
+        print('Symlinking BOLD files into FPREP_BIDS...')
         stage_bold_files(bold_files, fprep_func_dir, subject, session)
 
         # Stage this session's anat if it has one. Not every session is
@@ -246,7 +341,7 @@ def run_pipeline(
         if not os.path.exists(fprep_anat_dir):
             anat_input_dir = os.path.join(bids_dir, subject, session, 'anat')
             if os.path.isdir(anat_input_dir):
-                shutil.copytree(anat_input_dir, fprep_anat_dir)
+                _symlink_tree(anat_input_dir, fprep_anat_dir)
             else:
                 print('  No anat found for {} - will rely on another '
                       "session's anatomy for this subject.".format(session))
@@ -274,7 +369,7 @@ def run_pipeline(
     # Step 4 — Run fMRIPrep once, across all staged sessions
     # ------------------------------------------------------------------
     print('\n' + '=' * 42)
-    print('Copied it all over - now for fmriprep')
+    print('Staged it all (as symlinks) - now for fmriprep')
     print('=' * 42)
 
     container_type = os.environ.get('CONTAINER_TYPE', '')
@@ -296,6 +391,29 @@ def run_pipeline(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _session_label(raw: str) -> str:
+    """
+    Validate and normalize a single --ses token.
+
+    BIDS labels are alphanumeric only (no '-' or '_'). A token that isn't,
+    once any leading 'ses-' is stripped, is almost always a mistake where
+    multiple sessions were meant but weren't space-separated - e.g.
+    '--ses 01-02' typed meaning sessions 01 and 02, which argparse (with
+    nargs='+') sees as one literal token, not two. Left unchecked this
+    silently creates a bogus session called 'ses-01-02' instead of
+    processing '01' and '02'. Raising here turns that into a clear error
+    at parse time instead.
+    """
+    label = raw.removeprefix('ses-')
+    if not label.isalnum():
+        raise argparse.ArgumentTypeError(
+            "invalid session label '{}' - BIDS session labels are "
+            "alphanumeric only. If you meant multiple sessions, pass them "
+            "space-separated, e.g. --ses 01 02 (not --ses 01-02).".format(raw)
+        )
+    return 'ses-' + label
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description='Run fMRIPrep on preprocessed BOLD data to extract confounds.',
@@ -306,9 +424,8 @@ def _build_parser() -> argparse.ArgumentParser:
     req.add_argument('--input-file',  required=True,
                      help='Name of derivatives folder containing preprocessed BOLD')
     req.add_argument('--sub',         required=True, help='Subject label (e.g. sub-01)')
-    req.add_argument('--ses',         required=True, nargs='+',
-                     help='Session label(s) (e.g. ses-01 ses-02). Multiple '
-                          'sessions are staged then processed in a single fMRIPrep run.')
+    p.add_argument('--ses',           nargs='+', default=None, type=_session_label,
+                   help='Session label(s), space-separated (e.g. ses-01 ses-02, etc.)')
     p.add_argument('--help-env', action='store_true',
                    help='Print expected environment variables and exit')
     return p
@@ -335,7 +452,9 @@ def main() -> None:
         return
 
     subject = 'sub-' + args.sub.removeprefix('sub-')
-    sessions = ['ses-' + s.removeprefix('ses-') for s in args.ses]
+    # args.ses tokens are already validated + normalized to 'ses-XX' by the
+    # _session_label type function (or None if --ses was omitted).
+    sessions = args.ses
 
     run_pipeline(
         bids_dir=args.bids_dir,

@@ -3,16 +3,18 @@ set -e
 
 # --- Usage Function ---
 usage() {
-    echo "Usage: $0 --bids-dir <path> --sub <sub> --ses <ses> [--ses <ses> ...]"
+    echo "Usage: $0 --bids-dir <path> --sub <sub> [--ses <ses> ...]"
     echo ""
     echo "Required Arguments:"
     echo "  --bids-dir      Path to local BIDS directory"
     echo "  --sub           Subject label (e.g., sub-01)"
-    echo "  --ses           Session label (e.g., ses-01). Repeat --ses to process"
-    echo "                  multiple sessions in a single fMRIPrep run."
     echo "  --input-file    input file, placed in BID_DIR/derivatives"
     echo ""
     echo "Optional Arguments:"
+    echo "  --ses           Session label (e.g., ses-01). Repeat --ses to process"
+    echo "                  multiple sessions in a single fMRIPrep run. Omit"
+    echo "                  entirely to auto-discover and process every session"
+    echo "                  available for this subject."
     echo "  --skip-sync     Skip rsync step (assumes data is already on cluster)"
     echo "  --no-qsub       Run the pipeline script directly (no job submission)"
     echo "  --help          Display this help message"
@@ -44,16 +46,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# -> make subject & session(s) robust
+# -> make subject & session(s) robust, and reject anything that isn't a
+# clean alphanumeric BIDS label once 'ses-' is stripped. This catches the
+# case where multiple sessions were meant but not space-separated - e.g.
+# '--ses 01-02' typed meaning sessions 01 and 02 - which would otherwise
+# silently become one bogus session called 'ses-01-02'.
 SUBJECT="sub-${SUBJECT#sub-}"
 for i in "${!SESSIONS[@]}"; do
     SESSIONS[$i]="ses-${SESSIONS[$i]#ses-}"
+    stripped="${SESSIONS[$i]#ses-}"
+    if [[ ! "$stripped" =~ ^[a-zA-Z0-9]+$ ]]; then
+        echo "Error: invalid session label '${SESSIONS[$i]}' - BIDS session labels are alphanumeric only."
+        echo "If you meant multiple sessions, pass them as separate --ses flags, e.g. --ses 01 --ses 02 (not --ses 01-02)."
+        exit 1
+    fi
 done
 
 # --- Validate ---
 [[ -z "$BIDS_DIR" ]] && echo "Error: --bids-dir required" && usage
 [[ -z "$SUBJECT" ]]  && echo "Error: --sub required"      && usage
-[[ ${#SESSIONS[@]} -eq 0 ]] && echo "Error: --ses required (may be repeated)" && usage
 [[ -z "$INPUT_FILE" ]] && echo "Error: --input-file required" && usage
 # --- Resolve paths depending on where we're running ---
 if [[ "${PC_LOCATION}" == "local" ]]; then
@@ -66,6 +77,29 @@ else
     # On the cluster: BIDS_DIR is already the real path (from .bash_profile)
     REMOTE_HOST=""
     SUBMIT_BIDS_DIR="$BIDS_DIR"
+fi
+
+# --- Auto-discover sessions if none were given ---
+# Mirrors s03_fmriprep_func.py's own auto-discovery. We can only resolve
+# this here (rather than leaving it entirely to the python side) when
+# $BIDS_DIR is something this shell can actually list - true when running
+# directly on HPC, or locally when we're about to rsync anyway. The one
+# case we can't resolve here is "local machine + --skip-sync", where the
+# local machine may not hold a copy of the data at all - in that case we
+# leave SESSIONS empty and let the remote python script auto-discover
+# once it's running against the real BIDS_DIR.
+if [[ ${#SESSIONS[@]} -eq 0 ]] && ! { [[ "${PC_LOCATION}" == "local" ]] && [[ "$SKIP_SYNC" == true ]]; }; then
+    echo "No --ses given — auto-discovering sessions under \$BIDS_DIR/derivatives/${INPUT_FILE}/${SUBJECT} ..."
+    mapfile -t SESSIONS < <(
+        find "${BIDS_DIR}/derivatives/${INPUT_FILE}/${SUBJECT}" \
+            -mindepth 1 -maxdepth 1 -type d -name 'ses-*' \
+            -exec basename {} \; 2>/dev/null | sort
+    )
+    if [[ ${#SESSIONS[@]} -eq 0 ]]; then
+        echo "Error: no session directories found under ${BIDS_DIR}/derivatives/${INPUT_FILE}/${SUBJECT}"
+        exit 1
+    fi
+    echo "Auto-discovered session(s): ${SESSIONS[*]}"
 fi
 
 
@@ -99,7 +133,11 @@ else
     echo "  Running from:      HPC (direct qsub)"
     echo "  BIDS DIR:          $BIDS_DIR"
 fi
-SESSIONS_STR="${SESSIONS[*]}"
+if [[ ${#SESSIONS[@]} -gt 0 ]]; then
+    SESSIONS_STR="${SESSIONS[*]}"
+else
+    SESSIONS_STR="(none given - auto-discover all on execution host)"
+fi
 echo "  Subject:           $SUBJECT"
 echo "  Sessions:          $SESSIONS_STR"
 echo "  No-qsub mode:      $NO_QSUB"
@@ -107,22 +145,30 @@ echo "-------------------------------------------------------"
 
 # [2] Submit or run job
 REMOTE_LOG_DIR="${SUBMIT_BIDS_DIR}/logs"
-JOB_TAG=$(IFS=- ; echo "${SESSIONS[*]}")
+
+# Build a quoted --ses arg per session so all sessions are staged and
+# processed in a single fMRIPrep run. When SESSIONS is empty (only
+# possible in the local + --skip-sync case above), omit --ses entirely
+# so the python script auto-discovers sessions itself.
+if [[ ${#SESSIONS[@]} -gt 0 ]]; then
+    JOB_TAG=$(IFS=- ; echo "${SESSIONS[*]}")
+    SES_ARGS=""
+    for SES in "${SESSIONS[@]}"; do
+        SES_ARGS="${SES_ARGS} '${SES}'"
+    done
+    SES_FLAG="--ses ${SES_ARGS}"
+else
+    JOB_TAG="allsessions"
+    SES_FLAG=""
+fi
 JOB_NAME="fprep_func_${SUBJECT}_${JOB_TAG}"
 LOG_OUT="${REMOTE_LOG_DIR}/${JOB_NAME}.o"
 LOG_ERR="${REMOTE_LOG_DIR}/${JOB_NAME}.e"
 
-# Build a quoted --ses arg per session so all sessions are staged and
-# processed in a single fMRIPrep run.
-SES_ARGS=""
-for SES in "${SESSIONS[@]}"; do
-    SES_ARGS="${SES_ARGS} '${SES}'"
-done
-
 RUNNER_SCRIPT="~/pipeline/functional/s03_fmriprep_func.py \
     --bids-dir '${SUBMIT_BIDS_DIR}' \
     --sub      '${SUBJECT}' \
-    --ses      ${SES_ARGS} \
+    ${SES_FLAG} \
     --input-file '${INPUT_FILE}'"
 echo $RUNNER_SCRIPT
 # Make sure output dir exists
@@ -144,10 +190,10 @@ QSUB_CMD="source ~/.bash_profile; \
             -N  '${JOB_NAME}' \
             -o  '${LOG_OUT}' \
             -e  '${LOG_ERR}' \
-            -l  h_rt=24:00:00 \
-            -l  mem=8G \
-            -l  tmpfs=50G \
-            -pe smp 8 \
+            -l  h_rt=8:00:00 \
+            -l  mem=32G \
+            -l  tmpfs=200G \
+            -pe smp 4 \
             -j  n \
         ${RUNNER_SCRIPT}"
 echo "$QSUB_CMD"
