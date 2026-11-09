@@ -6,9 +6,11 @@ Denoise fMRI data using a V1-Optimized Connective Field Strategy.
 
 Pipeline:
 1) Extract fMRIprep noise components (removing standard motion columns).
+   --confounds-file picks their source: a full fMRIPrep run (default) or
+   s03_make_confounds.py's output (same columns).
 2) Extract MCFLIRT motion and compute the Friston-24 motion model.
 3) Compute FD and create dummy spike regressors for bad volumes.
-4) Compute DVARS using the fMRIPrep brainmask.
+4) Compute DVARS using the fMRIPrep brainmask (s03: its BOLD-grid brain mask).
 5) Merge and build the Final Design Matrix:
    - Top 5 CSF & Top 5 WM components
    - All discrete cosine basis regressors (drift)
@@ -235,14 +237,34 @@ def process_run(
     return results
 
 
+def _find_confound_inputs(conf_root: Path, subject: str, session: str, prefix: str) -> tuple:
+    """
+    Confounds tsv + brain mask for one run, from either a full fMRIPrep run
+    (<conf_root>/<sub>/<ses>/func/, per-run desc-brain_mask) or
+    s03_make_confounds.py (<conf_root>/<sub>/<ses>/, subject-level
+    desc-acompcorBrain_mask on the BOLD grid).
+    """
+    ses_dir = conf_root / subject / session
+    tsv = sorted(glob.glob(str(ses_dir / 'func' / f'{prefix}*desc-confounds_timeseries.tsv'))
+                 + glob.glob(str(ses_dir / f'{prefix}*desc-confounds_timeseries.tsv')))
+    if not tsv:
+        raise FileNotFoundError(f"No confounds tsv for {prefix} under {ses_dir}")
+    mask = sorted(glob.glob(str(ses_dir / 'func' / f'{prefix}*desc-brain_mask.nii.gz'))
+                  + glob.glob(str(conf_root / subject / f'{subject}_desc-acompcorBrain_mask.nii.gz')))
+    if not mask:
+        raise FileNotFoundError(f"No brain mask for {prefix} under {conf_root / subject}")
+    return tsv[0], mask[0]
+
+
 def run_pipeline(
     bids_dir: str, moco_file: str, output_file: str, subject: str, session: str = 'ses-01',
-    fd_threshold: float = 0.5, overwrite: dict = None, skip: dict = None
+    fd_threshold: float = 0.5, overwrite: dict = None, skip: dict = None,
+    confounds_file: str = 'fmriprep',
 ) -> dict:
-    
+
     bids = Path(bids_dir).resolve()
     moco_dir = bids / 'derivatives' / moco_file / subject / session
-    fmri_dir = bids / 'derivatives' / 'fmriprep' / subject / session
+    conf_root = bids / 'derivatives' / confounds_file
     out_dir  = bids / 'derivatives' / output_file / subject / session
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,8 +280,7 @@ def run_pipeline(
         prefix = '_'.join(parts)
 
         mcf_par = sorted(glob.glob(str(moco_dir / f'{prefix}_*mcflirt*.par')))[0]
-        f_tsv = sorted(glob.glob(str(fmri_dir / 'func' / f'{prefix}*desc-confounds_timeseries.tsv')))[0]
-        mask = sorted(glob.glob(str(fmri_dir / 'func' / f'{prefix}*desc-brain_mask.nii.gz')))[0]
+        f_tsv, mask = _find_confound_inputs(conf_root, subject, session, prefix)
 
         surf_lh = next(iter(sorted(glob.glob(str(moco_dir / f'*{task_label}_{run_label}*hemi-L_bold.func.gii')))), None)
         surf_rh = next(iter(sorted(glob.glob(str(moco_dir / f'*{task_label}_{run_label}*hemi-R_bold.func.gii')))), None)
@@ -286,6 +307,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p.add_argument('--ses', default='ses-01')
     p.add_argument('--fd-threshold', type=float, default=0.5, help="FD limit for dummy spikes.")
+    p.add_argument('--confounds-file', default='fmriprep',
+                   help="Derivatives subdirectory with the CompCor/cosine confounds: a full "
+                        "fMRIPrep run, or s03_make_confounds.py's output")
 
     ow_group = p.add_argument_group('overwrite / skip options')
     ow_group.add_argument('--overwrite', nargs='+', default=[], choices=STEP_KEYS)
@@ -302,7 +326,7 @@ def main():
 
     run_pipeline(
         args.bids_dir, args.moco_file, args.output_file, sub, ses,
-        args.fd_threshold, ow, sk
+        args.fd_threshold, ow, sk, confounds_file=args.confounds_file,
     )
 
 if __name__ == '__main__':
