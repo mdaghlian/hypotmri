@@ -84,7 +84,35 @@ for TASK in "CSFLE" "CSFRE" "pRFLE" "pRFRE"; do
 done
 ```
 
-## [3] fmriprep (for confounds)
+## [3] Confounds (aCompCor / tCompCor / cosine)
+There are two ways to make the CompCor confounds. **Option A (`s03_make_confounds.py`) is the recommended one.**
+
+### [3A] s03_make_confounds.py — recommended
+Reproduces fMRIPrep's aCompCor/tCompCor (same masks, parameters and column names) directly from the `s02_coreg` BOLD and the fMRIPrep-anat tissue maps, without running the fMRIPrep BOLD workflow. Much faster, and avoids re-resampling data that is already coregistered.
+
+Writes `<sub>/<ses>/*desc-confounds_timeseries.tsv` per run, plus a subject-level BOLD-grid brain mask (`<sub>/<sub>_desc-acompcorBrain_mask.nii.gz`).
+
+Locally
+```bash
+$PYPACKAGE_MANAGER activate preproc
+s03_make_confounds.py --sub hp01 --ses 01 \
+    --bids-dir $BIDS_DIR \
+    --coreg-file s2_coreg \
+    --anat-file fmriprep \
+    --output-file s3_make_confounds
+```
+On the cluster
+```bash
+s03_make_confounds_hpc.sh --sub hp01 --ses 01 \
+    --bids-dir $BIDS_DIR \
+    --coreg-file s2_coreg \
+    --anat-file fmriprep \
+    --output-file s3_make_confounds
+```
+
+### [3B] s03_fmriprep_func.py — previous default
+Runs the full fMRIPrep BOLD workflow on the coregistered data, only to get its confounds + brain mask. Writes to `derivatives/fmriprep`.
+
 Locally 
 ```bash
 $PYPACKAGE_MANAGER activate preproc
@@ -98,6 +126,18 @@ s03_fmriprep_func_hpc.sh --sub hp01 --ses 01 \
 ```
 
 ## [4] confounds 
+
+> **Which s04 reads which s03?** `s04_confounds.py` (PCA) only reads confounds from `derivatives/fmriprep` (i.e. [3B]). To use the recommended [3A] output, run `s04_confounds_nopca.py --confounds-file s3_make_confounds` (no HPC twin yet):
+> ```bash
+> s04_confounds_nopca.py --sub hp01 --ses 01 \
+>     --bids-dir $BIDS_DIR \
+>     --moco-file s2_coreg \
+>     --confounds-file s3_make_confounds \
+>     --output-file s4_denoised_nopca
+> ```
+> PCA vs no-PCA denoising is still an open decision (see `todo.md`).
+
+`s04_confounds.py`:
 - Grabs the confounds & bold-brainmasks from fmriprep
 - Removes the motion related ones 
 - Replace them with our own, FSL derived motion confounds (from moco file)

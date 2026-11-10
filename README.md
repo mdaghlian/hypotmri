@@ -58,8 +58,18 @@ Per volume each of these coregistration matrices is concatenated to put it all t
 	- "\_preproc-bold" files (aligned & motion corrected volumes)
 	- "\_space-fsnative" (aligned & projected surface files)
 
-### [3] s03_fmriprep_func.py
-To produce the fMRIprep confounds (acompcor etc) - we take the coregistered functional data, and run fMRIprep on it.  
+### [3] s03_make_confounds.py (recommended) / s03_fmriprep_func.py
+Produce the CompCor confounds (acompcor, tcompcor, cosine etc).
+
+**Recommended: `s03_make_confounds.py`.** Reproduces fMRIprep's aCompCor/tCompCor (same masks, parameters & column names) directly from the coregistered data, without running the fMRIprep BOLD workflow.
+- Input:
+	- s02_coreg output (coregistered bold + fsbrain mask)
+	- fMRIprep anatomy folder (tissue probability maps)
+- Output:
+	- per run `desc-confounds_timeseries.tsv` + a BOLD-grid brain mask
+	- read by `s04_confounds_nopca.py --confounds-file <output>` (the PCA `s04_confounds.py` currently only reads `derivatives/fmriprep`)
+
+Previous default: `s03_fmriprep_func.py` - takes the coregistered functional data and runs the full fMRIprep BOLD workflow on it.
 - Input:
 	- "func" directory: including "\_preproc-bold" files
 	- Freesurfer folder + fMRIprep anatomy folder
