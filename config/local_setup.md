@@ -9,6 +9,7 @@ Install these first (details for each are in the numbered sections below):
 1. **Python environment manager** — mamba, micromamba, or conda
 2. **Container manager** — Docker (local installs typically use this) or Singularity/Apptainer (typically used on HPC, see `hpc_setup.md`)
 3. **FreeSurfer + freeview** — must be installed natively, not containerized, because you need the GUI to QC segmentations and make manual edits
+4. **macOS only: GNU coreutils + rsync** — `brew install coreutils rsync`. `s02_coreg.py` needs `stdbuf` (coreutils), and the HPC sync scripts need GNU rsync (macOS's built-in `openrsync` is incompatible with Myriad)
 
 ## Step-by-step setup
 
@@ -163,7 +164,7 @@ Separate environments, one per pipeline stage, built from the recipes in `config
 | --- | --- | ---Optional may not include in final package --- |
 | `autoflat` | `anatomical/s04_pycortex.py` | flattens FreeSurfer meshes for pycortex (`autoflatten`) |
 | `pctx` | `anatomical/s04_pycortex.py`, postproc QC | pycortex surface visualisation — needs python 3.10 specifically, as required by pycortex |
-| `bcode_mac` | `postproc/*` (braincoder models) | macOS-only: TensorFlow + tensorflow-metal (Apple Silicon GPU), `tensorflow-probability`, `braincoder_bprf` (`testing-upstream-merge` branch), `dpu_mini`, and `cvl_utils`. Skipped automatically on non-macOS |
+| `bcode_mac` | `postproc/*` (braincoder models) | macOS-only: TensorFlow + tensorflow-metal (Apple Silicon GPU), `tensorflow-probability`, `braincoder_bprf` (`bprf_GP` branch), `dpu_mini`, and `cvl_utils`. Skipped automatically on non-macOS |
 
 `preproc` is built slightly differently from the rest: FSL doesn't publish a static yml, so the script downloads FSL's own conda recipe fresh each time (matched to your OS/CPU automatically) for the base install, then layers `preproc_extras.yml` on top — without pruning, so the FSL packages stay intact.
 
@@ -197,7 +198,7 @@ cd "${PIPELINE_DIR}/config"
 # install whatever's missing (skips environments that already exist)
 python s00_python_environments.py
 
-# target a single environment instead of all 5
+# target a single environment instead of all 6
 python s00_python_environments.py --env prf
 
 # apply yml changes to an existing environment in place (non-destructive)
@@ -209,6 +210,8 @@ python s00_python_environments.py --env prf --clean-env
 
 # install into a custom location instead of the default conda envs dir (useful on HPC)
 python s00_python_environments.py --env prf --prefix /scratch/$USER/envs
+# NB: if you do this for preproc, add `export PREPROC_ENV_DIR=/scratch/$USER/envs/preproc`
+# to ~/.bash_profile *before* sourcing config_pipeline.sh, so FSLDIR can be found
 
 # create a parallel copy for testing, without touching your real environment
 python s00_python_environments.py --env prf --env-suffix -test

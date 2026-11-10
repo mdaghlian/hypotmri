@@ -8,8 +8,8 @@
 .AppleDouble
 
 # --- Version control ---
-<!-- .git/ -->
-<!-- .gitignore -->
+# .git/
+# .gitignore
 
 # --- Python ---
 __pycache__/
@@ -18,10 +18,10 @@ __pycache__/
 *.pyo
 *.egg-info/
 .eggs/
-<!-- dist/ -->
-<!-- build/ -->
-<!-- .venv/ -->
-<!-- env/ -->
+# dist/
+# build/
+# .venv/
+# env/
 
 # --- Containers ---
 *.sif
@@ -29,7 +29,7 @@ __pycache__/
 *.tar
 
 # --- Neuroimaging intermediates ---
-<!-- work/ -->
-<!-- scratch/ -->
-<!-- tmp/ -->
-<!-- *.log -->
+# work/
+# scratch/
+# tmp/
+# *.log

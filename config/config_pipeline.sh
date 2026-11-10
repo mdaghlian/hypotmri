@@ -24,8 +24,9 @@ export FSL_VERSION="6.0.7.19"
 # CONDA_PREFIX is the base install: on the Mac its envs/ holds preproc, but on Myriad the base is the shared
 # /shared/ucl/apps/miniconda and preproc lives in ~/.conda/envs. The old "${CONDA_PREFIX}/envs/preproc" pointed at
 # a missing folder there, so host fslval printed nothing and s02 resampled at 1 mm (fixed 2026-10-30).
+# If preproc was installed with --prefix, export PREPROC_ENV_DIR=<prefix>/preproc before sourcing this file.
 unset FSLDIR
-for _fsl_env in "${CONDA_PREFIX}/envs/preproc" "${HOME}/.conda/envs/preproc" "${HOME}/miniforge3/envs/preproc"; do
+for _fsl_env in ${PREPROC_ENV_DIR:+"${PREPROC_ENV_DIR}"} "${CONDA_PREFIX}/envs/preproc" "${HOME}/.conda/envs/preproc" "${HOME}/miniforge3/envs/preproc"; do
     [ -x "${_fsl_env}/bin/fslhd" ] && { export FSLDIR="${_fsl_env}"; break; }
 done
 unset _fsl_env

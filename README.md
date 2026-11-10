@@ -44,9 +44,9 @@ Motion corection plus alignment:
 
 Per run each volume, is aligned to the corresponding runs "bref" - this can either be the single band reference file, or will be take a single volume from the run. 
 
-Each runs - "bref" is registered to a "bref_main" (i.e., the bref for the first run). 
+Each runs - "bref" is registered to a "bref_main". By default this is picked automatically (the first sbref, or vol-0 of the first bold); choose a specific one with `--bref-main`. There is one bref_main per subject, stored above session level, and it is shared across sessions.
 
-The bref_main is registered to the anatomy (freesurfer)
+The bref_main is registered to the anatomy (freesurfer, bbregister)
 
 Per volume each of these coregistration matrices is concatenated to put it all together in one single transform putting all of the volumes into the same space. In addition the data is sampled to the cortical surface. 
 
@@ -89,7 +89,7 @@ Run prf analyses
 - Output:
 	- Gaussian prf fits
 
-### [3] s03_cf_anaylsis
+### [3] s03_cf_prfpy.py
 Run connective field analyses
 - Input:
 	- project_*.yml file specifying settings
@@ -97,6 +97,14 @@ Run connective field analyses
 	- Freesurfer folder
 - Output:
 	- Connective field fits
+
+### [4] s04_collate_analyses.py
+Collect the analyses for one subject into a single table
+- Input:
+	- Gaussian prf fits, connective field fits
+	- Benson atlas ROIs + estimates (freesurfer folder)
+- Output:
+	- One CSV per subject
 
 
 ### experimental

@@ -33,13 +33,14 @@ brew install openssh
 apt-get install openssh
 ```
 
-Make sure you also have rsync
+You also need GNU rsync. **On macOS, install it with brew even if `rsync` already runs**: macOS ships `openrsync`, which is incompatible with the rsync on Myriad (see `trouble_shooting.md`).
 ```bash
-rsync
-# if not... same again
-# For macOS
+# For macOS (always)
 brew install rsync
-# or for linux
+# then open a new terminal and check you get the brew version (rsync 3.x, not openrsync)
+which rsync          # -> /opt/homebrew/bin/rsync (Apple Silicon) or /usr/local/bin/rsync (Intel)
+rsync --version
+# or for linux (only if missing)
 apt-get install rsync 
 ```
 ---
@@ -138,13 +139,16 @@ ml avail    # see all the modules available on the cluster
 --- 
 
 ## 6. Setup pipeline on cluster
-**ASSUMING YOU ALREADY SETUP LOCALLY**:
-Copy your local code to the cluster
+**ASSUMING YOU ALREADY SETUP LOCALLY** (including your `config/project_<name>.sh`, with `REMOTE_BIDS_DIR_PATH` set):
+Copy your local code to the cluster (run this on your local machine)
 ```bash
 rsync_code.sh
 # which runs...
-# rsync -avz /local/path/to/pipeline/ ucl-work:~/pipeline
+# rsync -avz "${PIPELINE_DIR%/}/" ucl-work:~/pipeline/
 ```
+This also copies your `config/project_*.sh` files (they are gitignored, but not rsync-ignored). On the cluster, `BIDS_DIR` is set to `REMOTE_BIDS_DIR_PATH` from that file.
+
+On this first run `rsync_code.sh` will print `set_project.sh not on PATH yet` — that's expected, the cluster `~/.bash_profile` isn't set up yet. You'll fix this at the end of this section.
 
 Log in to add conda module:
 ```bash 
@@ -188,12 +192,20 @@ To save press `ctrl+x`.
 
 To apply the changes run `source ~/.bash_profile`. You do not need to do this every time you login — it will be done automatically.
 
+The first time, you may see an error about `project_current.sh`: the synced symlink still points at a path on your local machine. Re-point it on the cluster:
+```bash
+source set_project.sh <project-name>   # e.g. hypot
+echo $BIDS_DIR                         # should print your REMOTE_BIDS_DIR_PATH
+```
+From now on `rsync_code.sh` does this for you after each sync.
+
 ## 7. Add python environments on the cluster
-Just as you ran locally you can install the python environments with conda:
+Just as you ran locally you can install the python environments with conda (run on a login node — the git installs need internet):
 ```bash
 cd $PIPELINE_DIR/config
-bash s00_python_environments.sh
+python s00_python_environments.py
 ```
+(`bcode_mac` is skipped automatically on Linux.)
 
 ## 8. Add the singularity images 
 ```bash

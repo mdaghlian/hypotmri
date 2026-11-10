@@ -7,7 +7,7 @@ source set_project.sh <project-name>
 ## [1] Susceptibility distortion correction - (afni)
 run susceptibility distortion correction using AFNI. This corrects for the stretching/squishing of BOLD images, that occurs along the phase-encoding axis. AFNI does this by comparing an image acquired in one phase-encoding direction with another in the opposite direction. 
 
-We call this command - specifying the subject, session and task to run through, and where to put the outputs. Note - you can also specify to run with the AFNI docker, by calling --afni-docker
+We call this command - specifying the subject, session and where to put the outputs. By default every `*bold*.nii*` in `<bids>/sub/ses/func/` is processed; restrict this with `--include-files`, `--include-patterns` or `--exclude-patterns` (task/run labels are read from the filenames). Note - you can also specify to run with the AFNI docker, by calling --afni-docker
 #### Run SDC locally 
 ```bash
 # Activate correct python env
@@ -15,17 +15,17 @@ $PYPACKAGE_MANAGER activate preproc
 # Run SDC (using afni docker)
 s01_sdc_AFNI.py --bids-dir $BIDS_DIR \
     --sub <sub-id> --ses <ses-id> \
-    --task <task-id> \
-    --output-file s1_AFNI_sdc \ 
-    --afni-docker $AFNI_IMAGE
+    --output-file s1_AFNI_sdc \
+    --afni-docker $AFNI_IMAGE \
+    --include-patterns "*task-<task-id>_*bold*.nii*"   # optional
 ```
 #### Run SDC on the HPC
 ```bash
+# --task is optional; it is forwarded as --include-patterns "*task-<task-id>_*bold*.nii*"
 s01_sdc_hpc.sh --bids-dir $BIDS_DIR \
     --sub <sub-id> --ses <ses-id> \
     --task <task-id> \
-    --output-file s1_AFNI_sdc 
-
+    --output-file s1_AFNI_sdc
 ```
 
 
@@ -53,14 +53,14 @@ s02_coreg_hpc.sh --sub hp01 --ses 01 \
     --output-file s2_coreg \
     --bids-dir $BIDS_DIR
 ```
-You can also submit runs & tasks separately - if you want to break it into smaller stages up
+You can also submit runs & tasks separately - if you want to break it into smaller stages up. Select runs with `--include-files` / `--include-patterns` (globs relative to the input `func/` dir) and `--exclude-patterns`.
 ```bash
 # Local
 s02_coreg.py --sub hp01 --ses 01 \
     --input-file s1_AFNI_sdc \
     --output-file s2_coreg \
     --bids-dir $BIDS_DIR \
-    --task pRFLE --run 1
+    --include-patterns "*task-pRFLE_run-01_*bold*.nii*"
 
 # Cluster
 # Arguments after " -- " are passed to s02_coreg.py
@@ -68,7 +68,7 @@ s02_coreg_hpc.sh --sub hp01 --ses 01 \
     --input-file s1_AFNI_sdc \
     --output-file s2_coreg \
     --bids-dir $BIDS_DIR \
-    -- --task pRFLE --run 1
+    -- --include-patterns "*task-pRFLE_run-01_*bold*.nii*"
 
 
 # you can loop over a submmission job like this
@@ -79,7 +79,7 @@ for TASK in "CSFLE" "CSFRE" "pRFLE" "pRFRE"; do
             --output-file s2_coreg \
             --bids-dir $BIDS_DIR \
             --skip-sync \
-            -- --task $TASK --run $run
+            -- --include-patterns "*task-${TASK}_run-${run}_*bold*.nii*"
     done
 done
 ```

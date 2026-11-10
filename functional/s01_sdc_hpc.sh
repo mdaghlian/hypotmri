@@ -12,7 +12,9 @@ usage() {
     echo "  --ses           Session label (e.g., ses-01 or 01)"
     echo ""
     echo "Optional Arguments:"
-    echo "  --task          Task label (default: empty, matches all tasks)"
+    echo "  --task          Task label (default: empty, matches all tasks)."
+    echo "                  Forwarded as --include-patterns '*task-<label>_*bold*.nii*';"
+    echo "                  don't combine with --include-patterns/--include-files after '--'"
     echo "  --no-qsub       Run the pipeline script directly (no job submission)"
     echo "  --skip-sync     Skip rsync step (assumes data is already on cluster)"
     echo "  --help          Display this help message"
@@ -107,7 +109,7 @@ RUNNER_SCRIPT="~/pipeline/functional/s01_sdc_AFNI.py \
     --output-file '${OUTPUT_FILE}' \
     --sub         '${SUBJECT}' \
     --ses         '${SESSION}' \
-    ${TASK:+--task '${TASK}'} \
+    ${TASK:+--include-patterns '*task-${TASK}_*bold*.nii*'} \
     --afni-docker '${AFNI_SIF}' \
     ${EXTRA_ARGS[*]}"
 
